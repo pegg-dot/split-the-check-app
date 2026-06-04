@@ -1,7 +1,7 @@
 // server/test/claim-verbs.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { applyVerb, normalizeItem, normalizeItems } = require('../lib/claim-verbs');
+const { applyVerb, normalizeItem, normalizeItems, normalizeUnit } = require('../lib/claim-verbs');
 
 const open = () => ({ id: '0', name: 'Burrata', price: 14, units: [{ shared: false, claims: [], dispute: null }] });
 const multi = () => ({ id: '1', name: 'Spritz', price: 36, units: [
@@ -95,4 +95,32 @@ test('applyVerb never mutates its input', () => {
   const before = JSON.stringify(it);
   applyVerb(it, 'grab', { unitIndex: 0, me: 'Jordan' });
   assert.strictEqual(JSON.stringify(it), before);
+});
+
+test('out-of-range unitIndex returns the item unchanged', () => {
+  const out = applyVerb(multi(), 'grab', { unitIndex: 9, me: 'Jordan' });
+  assert.strictEqual(out.units.length, 3);
+  assert.ok(out.units.every(u => u.claims.length === 0));
+});
+
+test('missing actor (me) is a no-op', () => {
+  const out = applyVerb(open(), 'grab', { unitIndex: 0 });
+  assert.deepStrictEqual(out.units[0], { shared: false, claims: [], dispute: null });
+});
+
+test('resolveAccept with no dispute keeps current claimants', () => {
+  const held = applyVerb(open(), 'grab', { unitIndex: 0, me: 'Sarah' });
+  const out = applyVerb(held, 'resolveAccept', { unitIndex: 0, me: 'Sarah' });
+  assert.deepStrictEqual(out.units[0], { shared: false, claims: ['Sarah'], dispute: null });
+});
+
+test('normalizeUnit coerces null/empty to an open unit', () => {
+  assert.deepStrictEqual(normalizeUnit(null), { shared: false, claims: [], dispute: null });
+  assert.deepStrictEqual(normalizeUnit({}), { shared: false, claims: [], dispute: null });
+});
+
+test('normalizeItem does not leak the legacy claims field and keeps unitPrice consistent', () => {
+  const [it] = normalizeItems([{ id: 0, name: 'Wine', price: 48, claims: [{ guestName: 'Sarah', splitCount: 1 }] }]);
+  assert.strictEqual(it.claims, undefined);
+  assert.strictEqual(it.unitPrice, 48);
 });
