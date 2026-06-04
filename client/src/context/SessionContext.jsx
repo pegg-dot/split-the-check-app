@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useEffect } from 'react';
+import { normalizeItems } from '../lib/claimVerbs';
 
 const SessionContext = createContext(null);
 
@@ -55,34 +56,27 @@ function sessionReducer(state, action) {
       return { ...initialState };
     }
     case 'SET_ITEMS': {
-      const subtotal = action.items.reduce((sum, item) => sum + item.price, 0);
-      return {
-        ...state,
-        items: action.items.map((item, i) => ({
-          ...item,
-          id: i,
-          claims: [],
-          // Preserve quantity/unitPrice from AI scan; default quantity=1
-          quantity:  item.quantity  || 1,
-          unitPrice: item.unitPrice || item.price,
-        })),
-        subtotal,
-      };
+      const subtotal = action.items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+      const items = normalizeItems(action.items.map((item, i) => ({
+        ...item, id: String(i),
+        units: Array.from({ length: Math.max(1, Math.round(item.quantity || 1)) }, () => ({ shared: false, claims: [], dispute: null })),
+      })));
+      return { ...state, items, subtotal };
     }
     case 'UPDATE_ITEM': {
-      const items = state.items.map(item => item.id === action.id ? { ...item, ...action.updates } : item);
+      const items = normalizeItems(state.items.map(item => item.id === action.id ? { ...item, ...action.updates } : item));
       const subtotal = items.reduce((sum, item) => sum + item.price, 0);
       return { ...state, items, subtotal };
     }
     case 'DELETE_ITEM': {
-      const items = state.items.filter(item => item.id !== action.id);
+      const items = normalizeItems(state.items.filter(item => item.id !== action.id));
       const subtotal = items.reduce((sum, item) => sum + item.price, 0);
       return { ...state, items, subtotal };
     }
     case 'ADD_ITEM': {
-      const newId = Math.max(0, ...state.items.map(i => i.id)) + 1;
+      const newId = String(Math.max(0, ...state.items.map(i => Number(i.id) || 0)) + 1);
       const qty = action.quantity || 1;
-      const items = [...state.items, { id: newId, name: action.name, price: action.price, quantity: qty, unitPrice: action.unitPrice || action.price, claims: [] }];
+      const items = normalizeItems([...state.items, { id: newId, name: action.name, price: action.price, quantity: qty, unitPrice: action.unitPrice || action.price, units: [{ shared: false, claims: [], dispute: null }] }]);
       const subtotal = items.reduce((sum, item) => sum + item.price, 0);
       return { ...state, items, subtotal };
     }
@@ -125,83 +119,6 @@ function sessionReducer(state, action) {
         guests: [...state.guests, { name: action.name, joinedAt: Date.now() }],
       };
     }
-    case 'CLAIM_ITEM': {
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        const existingClaim = item.claims.find(c => c.guestName === action.guestName);
-        if (existingClaim) return item;
-        const updated = { ...item, claims: [...item.claims, { guestName: action.guestName, splitCount: action.splitCount }] };
-        delete updated.dispute;
-        return updated;
-      });
-      return { ...state, items };
-    }
-    case 'SHARE_ITEM': {
-      // Update all existing claims to new splitCount, then add this person's claim
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        const alreadyClaimed = item.claims.some(c => c.guestName === action.guestName);
-        if (alreadyClaimed) return item;
-        const updated = {
-          ...item,
-          claims: [
-            ...item.claims.map(c => ({ ...c, splitCount: action.splitCount })),
-            { guestName: action.guestName, splitCount: action.splitCount },
-          ],
-        };
-        delete updated.dispute;
-        return updated;
-      });
-      return { ...state, items };
-    }
-    case 'UNCLAIM_ITEM': {
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        const updated = { ...item, claims: item.claims.filter(c => c.guestName !== action.guestName) };
-        delete updated.dispute;
-        return updated;
-      });
-      return { ...state, items };
-    }
-    case 'CLAIM_UNITS': {
-      // Claim N units from a quantity item (optimistic)
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        const totalClaimed = item.claims.reduce((s, c) => s + (c.units || 0), 0);
-        const available    = (item.quantity || 1) - totalClaimed;
-        const actualUnits  = Math.min(Math.max(1, action.units), available);
-        if (actualUnits <= 0) return item;
-        const existing = item.claims.find(c => c.guestName === action.guestName);
-        const newClaims = existing
-          ? item.claims.map(c => c.guestName === action.guestName ? { ...c, units: (c.units || 0) + actualUnits } : c)
-          : [...item.claims, { guestName: action.guestName, units: actualUnits }];
-        return { ...item, claims: newClaims };
-      });
-      return { ...state, items };
-    }
-    case 'UNCLAIM_UNITS': {
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        return { ...item, claims: item.claims.filter(c => c.guestName !== action.guestName) };
-      });
-      return { ...state, items };
-    }
-    case 'DISPUTE_ITEM': {
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        return { ...item, dispute: { by: action.disputerName } };
-      });
-      return { ...state, items };
-    }
-    case 'CANCEL_DISPUTE': {
-      const items = state.items.map(item => {
-        if (item.id !== action.itemId) return item;
-        const updated = { ...item };
-        delete updated.dispute;
-        return updated;
-      });
-      return { ...state, items };
-    }
     case 'MARK_PAID': {
       // Optimistic guest-asserted payment (server is authoritative via SYNC_PAYMENTS).
       const status = action.status || 'paid';
@@ -221,7 +138,7 @@ function sessionReducer(state, action) {
         hostName: s.hostName,
         venmoHandle: s.venmoHandle,
         hostDisplayName: s.hostDisplayName || null,
-        items: s.items,
+        items: normalizeItems(s.items),
         subtotal: s.subtotal,
         tax: s.tax,
         tipPercent: s.tipPercent ?? 18,
@@ -240,8 +157,8 @@ function sessionReducer(state, action) {
       };
     }
     case 'SYNC_ITEMS': {
-      const subtotal = action.items.reduce((sum, item) => sum + item.price, 0);
-      return { ...state, items: action.items, subtotal };
+      const items = normalizeItems(action.items);
+      return { ...state, items, subtotal: items.reduce((s, it) => s + it.price, 0) };
     }
     case 'SYNC_GUESTS': {
       return { ...state, guests: action.guests };
@@ -259,157 +176,94 @@ export function round2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-// Calculate what a person owes — all values rounded to 2dp
-export function calculatePersonTotal(state, personName) {
-  const { items, tax, subtotal, tipPercent, tipIncluded, tipAmount, adminFee, discount } = state;
-  if (!subtotal || subtotal === 0) return { itemsTotal: 0, taxShare: 0, tipShare: 0, adminFeeShare: 0, discountShare: 0, total: 0, claimedItems: [], unclaimedItems: [] };
+// ── Ported verbatim from server/lib/totals.js — keep in lockstep ─────────────
 
-  let itemsTotal = 0;
-  const claimedItems = [];
-
-  for (const item of items) {
-    const myClaim = item.claims.find(c => c.guestName === personName);
-    if (myClaim) {
-      let myShare;
-      if ((item.quantity || 1) > 1) {
-        // Quantity item: share proportional to units claimed
-        myShare = round2(item.price * ((myClaim.units || 1) / item.quantity));
-      } else {
-        myShare = round2(item.price / (myClaim.splitCount || 1));
-      }
-      itemsTotal = round2(itemsTotal + myShare);
-      claimedItems.push({ ...item, myShare });
-    }
-  }
-
-  const unclaimedItems = items.filter(item => item.claims.length === 0);
-
-  const proportion = subtotal > 0 ? itemsTotal / subtotal : 0;
-  const taxShare   = round2(Math.max(0, (tax || 0) * proportion));
-  const adminFeeShare = round2(Math.max(0, (adminFee || 0) * proportion));
-  const discountShare = round2(Math.max(0, (discount || 0) * proportion));
-
-  const tipMode   = state.tipMode || 'percent';
-  const tipDollar = Math.max(0, state.tipDollar || 0);
-
-  // Included gratuity (from receipt) split proportionally
-  let tipShare = tipIncluded ? round2(Math.max(0, (tipAmount || 0) * proportion)) : 0;
-
-  // Additional tip host adds on tip screen (stacks on top of any included gratuity)
-  if (tipMode === 'dollar') {
-    tipShare = round2(tipShare + Math.max(0, tipDollar * proportion));
-  } else if ((tipPercent || 0) > 0) {
-    tipShare = round2(tipShare + Math.max(0, itemsTotal * ((tipPercent || 0) / 100)));
-  }
-
-  const total = round2(Math.max(0, itemsTotal + taxShare + tipShare + adminFeeShare - discountShare));
-
-  return { itemsTotal, taxShare, tipShare, adminFeeShare, discountShare, total, claimedItems, unclaimedItems };
-}
-
-// Distribute `total` dollars among `weights` proportionally using the largest-remainder
-// method so that the per-person amounts always sum to EXACTLY `total` (no $0.01 drift).
 export function distributeProportionally(total, weights) {
   const totalWeight = weights.reduce((a, b) => a + b, 0);
   if (totalWeight === 0 || total === 0) return weights.map(() => 0);
-
   const totalCents = Math.round(total * 100);
-  const exactCents = weights.map(w => (w / totalWeight) * totalCents);
-  const floored    = exactCents.map(c => Math.floor(c));
-  let remainder    = totalCents - floored.reduce((a, b) => a + b, 0);
-
-  // Give leftover cents to whoever has the largest fractional part
-  const order = exactCents
-    .map((c, i) => ({ i, frac: c - Math.floor(c) }))
-    .sort((a, b) => b.frac - a.frac);
-  for (let k = 0; k < remainder; k++) floored[order[k].i] += 1;
-
+  const exact = weights.map(w => (w / totalWeight) * totalCents);
+  const floored = exact.map(c => Math.floor(c));
+  let remainder = totalCents - floored.reduce((a, b) => a + b, 0);
+  const order = exact.map((c, i) => ({ i, frac: c - Math.floor(c) })).sort((a, b) => b.frac - a.frac);
+  for (let k = 0; k < remainder; k++) floored[order[k % floored.length].i] += 1;
   return floored.map(c => c / 100);
 }
 
-// Calculate final totals for ALL participants at once using exact cent distribution.
-// Use this wherever totals must sum to the receipt grand total (dashboard, summary).
-// `calculatePersonTotal` is still fine for live running totals during claiming.
-export function calculateAllPersonTotals(state) {
-  const { items, tax, subtotal, tipPercent, tipIncluded, tipAmount, adminFee, discount } = state;
-  const tipMode   = state.tipMode || 'percent';
-  const tipDollar = Math.max(0, state.tipDollar || 0);
+export function unitPrice(item) { return item.price / (item.units.length || 1); }
 
-  const names = getAllParticipants(state);
-  if (!subtotal || subtotal === 0 || names.length === 0) {
-    return Object.fromEntries(names.map(n => [n, { itemsTotal: 0, taxShare: 0, tipShare: 0, adminFeeShare: 0, discountShare: 0, total: 0, claimedItems: [], unclaimedItems: [] }]));
-  }
+export function shareOf(item, name) {
+  const up = unitPrice(item);
+  return (item.units || []).reduce((s, u) => s + (u.claims.includes(name) ? up / u.claims.length : 0), 0);
+}
 
-  // Per-person item totals (exact, not rounded yet)
-  const itemTotals = {};
-  const claimedItemsMap = {};
-  for (const name of names) {
-    itemTotals[name] = 0;
-    claimedItemsMap[name] = [];
-  }
-
+// Each item's claimed value (in cents), distributed across its claimants by
+// raw shareOf weights via largest-remainder — exact per-person item charges.
+function perPersonItemCents(items, names) {
+  const cents = Object.fromEntries(names.map(n => [n, 0]));
+  const claimedNames = {};
   for (const item of items) {
-    for (const claim of item.claims) {
-      let share;
-      if ((item.quantity || 1) > 1) {
-        share = round2(item.price * ((claim.units || 1) / item.quantity));
-      } else {
-        share = round2(item.price / (claim.splitCount || 1));
-      }
-      if (itemTotals[claim.guestName] !== undefined) {
-        itemTotals[claim.guestName] = round2(itemTotals[claim.guestName] + share);
-        claimedItemsMap[claim.guestName].push({ ...item, myShare: share });
-      }
-    }
+    const up = unitPrice(item);
+    const claimedUnits = item.units.filter(u => u.claims.length > 0).length;
+    if (claimedUnits === 0) continue;
+    const claimedValue = round2(up * claimedUnits);
+    const itemNames = names.filter(n => shareOf(item, n) > 0);
+    const weights = itemNames.map(n => shareOf(item, n));
+    const dist = distributeProportionally(claimedValue, weights);
+    itemNames.forEach((n, i) => {
+      cents[n] += Math.round(dist[i] * 100);
+      (claimedNames[n] = claimedNames[n] || []).push({ name: item.name, myShare: dist[i] });
+    });
   }
+  return { cents, claimedNames };
+}
 
-  const unclaimedItems = items.filter(item => item.claims.length === 0);
+export function calculateAllPersonTotals(state) {
+  const items = normalizeItems(state.items);
+  const subtotal = state.subtotal || 0;
+  const names = getAllParticipants(state);
+  const blank = { itemsTotal: 0, taxShare: 0, tipShare: 0, adminFeeShare: 0, discountShare: 0, total: 0, claimedItems: [] };
+  if (!subtotal || names.length === 0) return Object.fromEntries(names.map(n => [n, { ...blank }]));
 
-  // Weights = each person's item total (proportion of subtotal)
+  const tax = state.tax || 0;
+  const adminFee = state.adminFee || 0;
+  const discount = state.discount || 0;
+  const tipMode = state.tipMode || 'percent';
+  const tipPercent = Math.max(0, state.tipPercent || 0);
+  const tipDollar = Math.max(0, state.tipDollar || 0);
+  const tipIncluded = state.tipIncluded;
+  const tipAmount = state.tipAmount || 0;
+
+  const { cents, claimedNames } = perPersonItemCents(items, names);
+  const itemTotals = Object.fromEntries(names.map(n => [n, cents[n] / 100]));
+  const claimedSubtotal = round2(names.reduce((s, n) => s + itemTotals[n], 0));
+  const scale = subtotal > 0 ? claimedSubtotal / subtotal : 0;
   const weights = names.map(n => itemTotals[n]);
 
-  // Distribute tax, adminFee, and tip using largest-remainder so sums are exact
-  const taxShares      = distributeProportionally(tax || 0, weights);
-  const adminFeeShares = distributeProportionally(adminFee || 0, weights);
-  const discountShares = distributeProportionally(discount || 0, weights); // comps/promos, subtracted
-
-  // Tip: included gratuity + additional tip chosen by host
-  const includedGratuityShares = tipIncluded
-    ? distributeProportionally(tipAmount || 0, weights)
-    : names.map(() => 0);
-
-  let additionalTipShares;
-  if (tipMode === 'dollar') {
-    additionalTipShares = distributeProportionally(tipDollar, weights);
-  } else if ((tipPercent || 0) > 0) {
-    // Percent tip is calculated on each person's item total, then distributed
-    const rawPctTips = weights.map(w => w * ((tipPercent || 0) / 100));
-    const pctTipTotal = round2(rawPctTips.reduce((a, b) => a + b, 0));
-    additionalTipShares = distributeProportionally(pctTipTotal, weights);
-  } else {
-    additionalTipShares = names.map(() => 0);
-  }
+  const taxShares = distributeProportionally(round2(tax * scale), weights);
+  const adminShares = distributeProportionally(round2(adminFee * scale), weights);
+  const discountShares = distributeProportionally(round2(discount * scale), weights);
+  const includedTipShares = tipIncluded ? distributeProportionally(round2(tipAmount * scale), weights) : names.map(() => 0);
+  let addTipShares;
+  if (tipMode === 'dollar') addTipShares = distributeProportionally(round2(tipDollar * scale), weights);
+  else if (tipPercent > 0) addTipShares = distributeProportionally(round2(claimedSubtotal * (tipPercent / 100)), weights);
+  else addTipShares = names.map(() => 0);
 
   const result = {};
-  names.forEach((name, i) => {
-    const iTotal      = itemTotals[name];
-    const taxShare    = taxShares[i];
-    const adminShare  = adminFeeShares[i];
-    const discountShare = discountShares[i];
-    const tipShare    = round2(includedGratuityShares[i] + additionalTipShares[i]);
-    const total       = round2(Math.max(0, iTotal + taxShare + tipShare + adminShare - discountShare));
-    result[name] = {
-      itemsTotal:   iTotal,
-      taxShare,
-      tipShare,
-      adminFeeShare: adminShare,
-      discountShare,
-      total,
-      claimedItems: claimedItemsMap[name],
-      unclaimedItems,
-    };
+  names.forEach((n, i) => {
+    const tipShare = round2(includedTipShares[i] + addTipShares[i]);
+    const total = round2(Math.max(0, itemTotals[n] + taxShares[i] + tipShare + adminShares[i] - discountShares[i]));
+    result[n] = { itemsTotal: itemTotals[n], taxShare: taxShares[i], tipShare, adminFeeShare: adminShares[i], discountShare: discountShares[i], total, claimedItems: claimedNames[n] || [] };
   });
   return result;
+}
+
+export function calculatePersonTotal(state, personName) {
+  const all = calculateAllPersonTotals(state);
+  const items = normalizeItems(state.items);
+  const unclaimedItems = items.filter(it => it.units.every(u => u.claims.length === 0));
+  const base = all[personName] || { itemsTotal: 0, taxShare: 0, tipShare: 0, adminFeeShare: 0, discountShare: 0, total: 0, claimedItems: [] };
+  return { ...base, unclaimedItems };
 }
 
 // Currency symbol for a given ISO code
@@ -440,36 +294,46 @@ export function getAllParticipants(state) {
 // The dollar value of the bill that NOBODY has claimed (fully or partially).
 // This is the amount the host silently eats unless it's surfaced — the
 // "money truth" number. We WARN with this; we do not change how splits divide.
+// Ported verbatim from server/lib/totals.js — keep in lockstep.
 export function calculateUnaccounted(state) {
-  const { items, subtotal, tax = 0, adminFee = 0, tipIncluded, tipAmount = 0 } = state;
-  if (!subtotal || subtotal === 0) return { unclaimedItemValue: 0, totalUnaccounted: 0 };
+  const items = normalizeItems(state.items);
+  const subtotal = state.subtotal || 0;
+  if (!subtotal) return { unclaimedItemValue: 0, totalUnaccounted: 0 };
+  const tax = state.tax || 0;
+  const adminFee = state.adminFee || 0;
+  const discount = state.discount || 0;
+  const tipIncluded = state.tipIncluded;
+  const tipAmount = state.tipAmount || 0;
   const tipMode = state.tipMode || 'percent';
-  const tipDollar = Math.max(0, state.tipDollar || 0);
   const tipPercent = Math.max(0, state.tipPercent || 0);
+  const tipDollar = Math.max(0, state.tipDollar || 0);
 
-  let claimedItemValue = 0;
+  // Match calculateAllPersonTotals exactly: round each item's claimed value to
+  // cents BEFORE summing (that function distributes per-item rounded values), so
+  // the two agree on claimedSubtotal even when a unit price isn't a whole cent.
+  let claimedCents = 0;
   for (const item of items) {
-    const claims = item.claims || [];
-    if (claims.length === 0) continue;
-    if ((item.quantity || 1) > 1) {
-      const unitsClaimed = claims.reduce((s, c) => s + (c.units || 0), 0);
-      claimedItemValue = round2(claimedItemValue + item.price * (unitsClaimed / item.quantity));
-    } else {
-      const splitCount = claims[0]?.splitCount || 1;
-      const perShare = item.price / splitCount;
-      claimedItemValue = round2(claimedItemValue + perShare * Math.min(claims.length, splitCount));
-    }
+    const up = item.price / (item.units.length || 1);
+    const claimedUnits = item.units.filter(u => u.claims.length > 0).length;
+    if (claimedUnits === 0) continue;
+    claimedCents += Math.round(round2(up * claimedUnits) * 100);
   }
+  const claimedSubtotal = claimedCents / 100;
+  const unclaimedItemValue = round2(Math.max(0, subtotal - claimedSubtotal));
+  const scale = subtotal > 0 ? claimedSubtotal / subtotal : 0;
 
-  const unclaimedItemValue = round2(Math.max(0, subtotal - claimedItemValue));
-  const proportion = subtotal > 0 ? unclaimedItemValue / subtotal : 0;
-  const unTax = round2(tax * proportion);
-  const unAdmin = round2(adminFee * proportion);
-  let unTip = tipIncluded ? round2(tipAmount * proportion) : 0;
-  if (tipMode === 'dollar') unTip = round2(unTip + tipDollar * proportion);
-  else if (tipPercent > 0) unTip = round2(unTip + unclaimedItemValue * (tipPercent / 100));
+  // Each unaccounted fee is the EXACT complement of the chargeable portion that
+  // calculateAllPersonTotals bills to claimants — so the two reconcile to the cent.
+  const unTax = round2(tax - round2(tax * scale));
+  const unAdmin = round2(adminFee - round2(adminFee * scale));
+  const unDiscount = round2(discount - round2(discount * scale));
+  const unIncludedTip = tipIncluded ? round2(tipAmount - round2(tipAmount * scale)) : 0;
+  let unAddTip;
+  if (tipMode === 'dollar') unAddTip = round2(tipDollar - round2(tipDollar * scale));
+  else if (tipPercent > 0) unAddTip = round2(round2(subtotal * (tipPercent / 100)) - round2(claimedSubtotal * (tipPercent / 100)));
+  else unAddTip = 0;
 
-  const totalUnaccounted = round2(unclaimedItemValue + unTax + unAdmin + unTip);
+  const totalUnaccounted = round2(unclaimedItemValue + unTax + unAdmin + unIncludedTip + unAddTip - unDiscount);
   return { unclaimedItemValue, totalUnaccounted };
 }
 

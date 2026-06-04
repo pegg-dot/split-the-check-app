@@ -1,81 +1,58 @@
 import { describe, it, expect } from 'vitest';
-import {
-  round2,
-  distributeProportionally,
-  calculatePersonTotal,
-  calculateAllPersonTotals,
-  calculateUnaccounted,
-  toUSD,
-  formatPrice,
-  currencySymbol,
-} from './SessionContext.jsx';
+import { calculateAllPersonTotals, calculatePersonTotal, calculateUnaccounted, round2, shareOf } from './SessionContext';
 
-describe('round2 / distribution', () => {
-  it('round2 kills float drift', () => {
-    expect(round2(0.1 + 0.2)).toBe(0.3);
-  });
-  it('distributeProportionally sums exactly to total', () => {
-    const parts = distributeProportionally(10, [1, 1, 1]);
-    expect(parts.reduce((a, b) => a + b, 0)).toBe(10);
-  });
+const seed = () => ({
+  hostName: 'Sarah', guests: [{ name: 'Jordan' }, { name: 'Mia' }],
+  subtotal: 139, tax: 11.82, tipPercent: 18, tipMode: 'percent',
+  items: [
+    { id: '0', name: 'Pizza', price: 18, units: [{ shared: false, claims: ['Sarah'], dispute: null }] },
+    { id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+    { id: '2', name: 'Negroni', price: 14, units: [{ shared: false, claims: ['Sarah'], dispute: null }] },
+    { id: '3', name: 'Spritz', price: 36, units: [
+      { shared: false, claims: ['Mia'], dispute: null }, { shared: false, claims: ['Mia'], dispute: null }, { shared: false, claims: ['Sarah'], dispute: null }] },
+    { id: '4', name: 'Wine', price: 48, units: [{ shared: true, claims: ['Sarah', 'Mia'], dispute: null }] },
+    { id: '5', name: 'Tiramisu', price: 9, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+  ],
 });
 
-describe('per-person totals', () => {
-  const state = {
-    hostName: 'Host',
-    guests: [{ name: 'A' }, { name: 'B' }],
-    subtotal: 30, tax: 3, tipPercent: 20, tipMode: 'percent', adminFee: 0,
-    items: [
-      { id: 0, name: 'Burger', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] },
-      { id: 1, name: 'Salad', price: 10, claims: [{ guestName: 'B', splitCount: 1 }] },
-    ],
-  };
-
-  it('calculatePersonTotal matches expected (A=26, B=13)', () => {
-    expect(calculatePersonTotal(state, 'A').total).toBe(26);
-    expect(calculatePersonTotal(state, 'B').total).toBe(13);
+describe('SessionContext money math (unit model)', () => {
+  it('shareOf splits shared evenly', () => {
+    expect(shareOf({ price: 48, units: [{ shared: true, claims: ['Sarah', 'Mia'] }] }, 'Sarah')).toBe(24);
   });
-
-  it('calculateAllPersonTotals sums to grand total', () => {
-    const t = calculateAllPersonTotals(state);
-    expect(round2(t.A.total + t.B.total)).toBe(39);
+  it('fully-claimed totals sum exactly to grand total', () => {
+    const totals = calculateAllPersonTotals(seed());
+    const grand = round2(139 + 11.82 + 139 * 0.18);
+    expect(round2(Object.values(totals).reduce((s, p) => s + p.total, 0))).toBe(grand);
   });
-
-  it('discount reduces per-person totals proportionally (matches server)', () => {
-    const s = {
-      hostName: 'Host', guests: [{ name: 'A' }, { name: 'B' }],
-      subtotal: 30, tax: 0, tipPercent: 0, discount: 6,
+  it('Jordan owes 11.39 for Tiramisu only', () => {
+    const solo = { hostName: 'Sarah', guests: [{ name: 'Jordan' }], subtotal: 139, tax: 11.82, tipPercent: 18, tipMode: 'percent',
+      items: [{ id: '5', name: 'Tiramisu', price: 9, units: [{ shared: false, claims: ['Jordan'], dispute: null }] }] };
+    const j = calculatePersonTotal(solo, 'Jordan');
+    expect(j.itemsTotal).toBe(9);
+    expect(j.taxShare).toBe(0.77);
+    expect(j.tipShare).toBe(1.62);
+    expect(j.total).toBe(11.39);
+  });
+  it('discount parity', () => {
+    const totals = calculateAllPersonTotals({ ...seed(), discount: 10 });
+    const grand = round2(139 + 11.82 + 139 * 0.18 - 10);
+    expect(round2(Object.values(totals).reduce((s, p) => s + p.total, 0))).toBe(grand);
+  });
+  it('unaccounted: unclaimed item value surfaces; reconciles', () => {
+    const partial = { hostName: 'Sarah', guests: [{ name: 'Jordan' }], subtotal: 28, tax: 0, tipPercent: 0,
       items: [
-        { id: 0, name: 'Burger', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] },
-        { id: 1, name: 'Salad', price: 10, claims: [{ guestName: 'B', splitCount: 1 }] },
-      ],
-    };
-    const t = calculateAllPersonTotals(s);
-    expect(t.A.total).toBe(16);
-    expect(t.B.total).toBe(8);
+        { id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+        { id: '2', name: 'Negroni', price: 14, units: [{ shared: false, claims: [], dispute: null }] }] };
+    expect(calculateUnaccounted(partial).unclaimedItemValue).toBe(14);
+    const totals = calculateAllPersonTotals(partial);
+    const sum = round2(Object.values(totals).reduce((s, p) => s + p.total, 0) + calculateUnaccounted(partial).totalUnaccounted);
+    expect(sum).toBe(28);
   });
-
-  it('client and server math agree on the "split 3 ways, 1 claimer" case', () => {
-    const s = {
-      hostName: 'Host', guests: [{ name: 'A' }],
-      subtotal: 30, tax: 0, tipPercent: 0,
-      items: [{ id: 0, name: 'Platter', price: 30, claims: [{ guestName: 'A', splitCount: 3 }] }],
-    };
-    expect(calculateUnaccounted(s).totalUnaccounted).toBe(20);
-  });
-});
-
-describe('currency helpers', () => {
-  it('toUSD applies exchange rate, clamps negatives', () => {
-    expect(toUSD(10, 1.1)).toBe(11);
-    expect(toUSD(-5, 1)).toBe(0);
-  });
-  it('formatPrice never returns NaN', () => {
-    expect(formatPrice(NaN, 'USD')).toBe('$0.00');
-    expect(formatPrice(4.5, 'EUR')).toBe('€4.50');
-  });
-  it('currencySymbol falls back to code', () => {
-    expect(currencySymbol('USD')).toBe('$');
-    expect(currencySymbol('SEK')).toBe('SEK ');
+  it('calculatePersonTotal returns unclaimedItems', () => {
+    const partial = { hostName: 'Sarah', guests: [{ name: 'Jordan' }], subtotal: 28, tax: 0, tipPercent: 0,
+      items: [
+        { id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+        { id: '2', name: 'Negroni', price: 14, units: [{ shared: false, claims: [], dispute: null }] }] };
+    expect(calculatePersonTotal(partial, 'Jordan').unclaimedItems.length).toBe(1);
   });
 });
