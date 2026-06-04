@@ -144,3 +144,21 @@ test('partial claim percent tip reconciles to the cent (no double-round drift)',
   const sum = round2(Object.values(totals).reduce((a, p) => a + p.total, 0) + totalUnaccounted);
   assert.strictEqual(sum, grand);
 });
+
+test('partial claim with sub-cent unit price reconciles exactly', () => {
+  const s = {
+    hostName: 'Sarah', guests: [{ name: 'Jordan' }],
+    subtotal: 10, tax: 1.07, tipPercent: 20, tipMode: 'percent',
+    items: [{ id: '0', name: 'Tacos', price: 10, units: [
+      { shared: false, claims: ['Jordan'], dispute: null },
+      { shared: false, claims: [], dispute: null },
+      { shared: false, claims: [], dispute: null },
+    ] }],
+    payments: [],
+  };
+  const totals = calculateAllPersonTotals(s);
+  const { totalUnaccounted } = calculateUnaccounted(s);
+  const grand = round2(10 + 1.07 + 10 * (20 / 100));
+  const sum = round2(Object.values(totals).reduce((a, p) => a + p.total, 0) + totalUnaccounted);
+  assert.strictEqual(sum, grand);
+});

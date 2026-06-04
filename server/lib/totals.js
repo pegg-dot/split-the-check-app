@@ -111,12 +111,17 @@ function calculateUnaccounted(session) {
   const tipPercent = Math.max(0, session.tipPercent || 0);
   const tipDollar = Math.max(0, session.tipDollar || 0);
 
-  let claimed = 0;
+  // Match calculateAllPersonTotals exactly: round each item's claimed value to
+  // cents BEFORE summing (that function distributes per-item rounded values), so
+  // the two agree on claimedSubtotal even when a unit price isn't a whole cent.
+  let claimedCents = 0;
   for (const item of items) {
     const up = item.price / (item.units.length || 1);
-    claimed += up * item.units.filter(u => u.claims.length > 0).length;
+    const claimedUnits = item.units.filter(u => u.claims.length > 0).length;
+    if (claimedUnits === 0) continue;
+    claimedCents += Math.round(round2(up * claimedUnits) * 100);
   }
-  const claimedSubtotal = round2(claimed);
+  const claimedSubtotal = claimedCents / 100;
   const unclaimedItemValue = round2(Math.max(0, subtotal - claimedSubtotal));
   const scale = subtotal > 0 ? claimedSubtotal / subtotal : 0;
 
