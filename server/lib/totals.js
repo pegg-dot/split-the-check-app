@@ -104,6 +104,7 @@ function calculateUnaccounted(session) {
   if (!subtotal) return { unclaimedItemValue: 0, totalUnaccounted: 0 };
   const tax = session.tax || 0;
   const adminFee = session.adminFee || 0;
+  const discount = session.discount || 0;
   const tipIncluded = session.tipIncluded;
   const tipAmount = session.tipAmount || 0;
   const tipMode = session.tipMode || 'percent';
@@ -115,13 +116,22 @@ function calculateUnaccounted(session) {
     const up = item.price / (item.units.length || 1);
     claimed += up * item.units.filter(u => u.claims.length > 0).length;
   }
-  claimed = round2(claimed);
-  const unclaimedItemValue = round2(Math.max(0, subtotal - claimed));
-  const prop = subtotal > 0 ? unclaimedItemValue / subtotal : 0;
-  let tip = tipIncluded ? round2(tipAmount * prop) : 0;
-  if (tipMode === 'dollar') tip = round2(tip + tipDollar * prop);
-  else if (tipPercent > 0) tip = round2(tip + unclaimedItemValue * (tipPercent / 100));
-  const totalUnaccounted = round2(unclaimedItemValue + tax * prop + adminFee * prop + tip);
+  const claimedSubtotal = round2(claimed);
+  const unclaimedItemValue = round2(Math.max(0, subtotal - claimedSubtotal));
+  const scale = subtotal > 0 ? claimedSubtotal / subtotal : 0;
+
+  // Each unaccounted fee is the EXACT complement of the chargeable portion that
+  // calculateAllPersonTotals bills to claimants — so the two reconcile to the cent.
+  const unTax = round2(tax - round2(tax * scale));
+  const unAdmin = round2(adminFee - round2(adminFee * scale));
+  const unDiscount = round2(discount - round2(discount * scale));
+  const unIncludedTip = tipIncluded ? round2(tipAmount - round2(tipAmount * scale)) : 0;
+  let unAddTip;
+  if (tipMode === 'dollar') unAddTip = round2(tipDollar - round2(tipDollar * scale));
+  else if (tipPercent > 0) unAddTip = round2(round2(subtotal * (tipPercent / 100)) - round2(claimedSubtotal * (tipPercent / 100)));
+  else unAddTip = 0;
+
+  const totalUnaccounted = round2(unclaimedItemValue + unTax + unAdmin + unIncludedTip + unAddTip - unDiscount);
   return { unclaimedItemValue, totalUnaccounted };
 }
 

@@ -108,3 +108,39 @@ test('distributeProportionally sums exactly with leftover cents', () => {
   const out = distributeProportionally(10, [1, 1, 1]); // 3.34/3.33/3.33
   assert.strictEqual(round2(out.reduce((a, b) => a + b, 0)), 10);
 });
+
+test('partial claim WITH discount reconciles exactly (Σtotals + unaccounted == grand)', () => {
+  const s = {
+    hostName: 'Sarah', guests: [{ name: 'Jordan' }],
+    subtotal: 30, tax: 0, tipPercent: 0, discount: 9,
+    items: [{ id: '0', name: 'Platter', price: 30, units: [
+      { shared: false, claims: ['Jordan'], dispute: null },
+      { shared: false, claims: [], dispute: null },
+      { shared: false, claims: [], dispute: null },
+    ] }],
+    payments: [],
+  };
+  const totals = calculateAllPersonTotals(s);
+  const { totalUnaccounted } = calculateUnaccounted(s);
+  const grand = round2(30 - 9);
+  const sum = round2(Object.values(totals).reduce((a, p) => a + p.total, 0) + totalUnaccounted);
+  assert.strictEqual(sum, grand);
+});
+
+test('partial claim percent tip reconciles to the cent (no double-round drift)', () => {
+  const s = {
+    hostName: 'Sarah', guests: [{ name: 'Jordan' }],
+    subtotal: 33.33, tax: 0, tipPercent: 15, tipMode: 'percent',
+    items: [{ id: '0', name: 'Thing', price: 33.33, units: [
+      { shared: false, claims: ['Jordan'], dispute: null },
+      { shared: false, claims: [], dispute: null },
+      { shared: false, claims: [], dispute: null },
+    ] }],
+    payments: [],
+  };
+  const totals = calculateAllPersonTotals(s);
+  const { totalUnaccounted } = calculateUnaccounted(s);
+  const grand = round2(33.33 + 33.33 * 0.15);
+  const sum = round2(Object.values(totals).reduce((a, p) => a + p.total, 0) + totalUnaccounted);
+  assert.strictEqual(sum, grand);
+});
