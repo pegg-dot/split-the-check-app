@@ -391,11 +391,26 @@ io.on('connection', (socket) => {
   // Rejoin socket room (for reconnects / page navigations)
   socket.on('rejoin-room', ({ sessionId, guestName, isHost }) => {
     const session = getSession(sessionId);
-    if (session) {
-      socket.join(sessionId);
-      // Re-establish identity after a navigation/reconnect.
-      if (guestName) {
-        socketMeta.set(socket.id, { sessionId, name: guestName, isHost: !!isHost });
+    if (!session) return;
+    // Always re-join the room so the socket gets live broadcasts.
+    socket.join(sessionId);
+    // Re-establish identity only when the claimed name is verifiably in the session.
+    // This prevents a fresh socket from spoofing host or any other participant.
+    if (guestName) {
+      const lc = guestName.toLowerCase();
+      if (isHost) {
+        // Only bind as host when the supplied name exactly matches the session's hostName.
+        if ((session.hostName || '').toLowerCase() === lc) {
+          socketMeta.set(socket.id, { sessionId, name: session.hostName, isHost: true });
+        }
+        // else: name doesn't match — leave socket unbound (no identity set)
+      } else {
+        // Only bind as guest when the name already exists in session.guests.
+        const existingGuest = session.guests.find(g => g.name.toLowerCase() === lc);
+        if (existingGuest) {
+          socketMeta.set(socket.id, { sessionId, name: existingGuest.name, isHost: false });
+        }
+        // else: unknown name — leave socket unbound
       }
     }
   });
@@ -553,15 +568,15 @@ io.on('connection', (socket) => {
   });
 
   // Guest finished claiming
-  socket.on('done-claiming', ({ sessionId, guestName }) => {
+  socket.on('done-claiming', ({ sessionId }) => {
     const session = getSession(sessionId);
     if (!session) return;
-    const actor = actorName(guestName);
-    if (!actor) return;
+    const me = actorName(null);
+    if (!me) return;
 
     if (!session.doneClaiming) session.doneClaiming = [];
-    if (!session.doneClaiming.includes(actor)) {
-      session.doneClaiming.push(actor);
+    if (!session.doneClaiming.includes(me)) {
+      session.doneClaiming.push(me);
     }
     store.saveSession(session);
     io.to(sessionId).emit('claiming-update', { doneClaiming: session.doneClaiming });
@@ -666,7 +681,9 @@ io.on('connection', (socket) => {
         dirty = true;
         const claims = u.claims.filter(n => n !== guestName);
         const shared = claims.length > 1 ? u.shared : false;
-        const dispute = hadDispute ? null : u.dispute;
+        // Clear dispute if: removed guest filed it, OR unit now has no claimants
+        // (a dispute with no owner is unresolvable).
+        const dispute = (hadDispute || claims.length === 0) ? null : u.dispute;
         return { shared, claims, dispute };
       });
       if (dirty) {

@@ -106,6 +106,73 @@ const conn = () => io(URL, { transports: ['websocket'], forceNew: true });
     lastUpdated.items[1].units[1].dispute === null &&
     lastUpdated.items[1].units[1].claims.includes('Nate'));
 
+  // ─── cover-item: Alex covers item 1 (Wine Bottle, 3 units) ──────────────
+  // First release/reset item 1 by having host re-create the session with fresh units.
+  // Use a dedicated fresh session for cover-item isolation.
+  const SID2 = SID + '_cover';
+  const host2 = conn(); await new Promise(r => host2.on('connect', r));
+  host2.emit('create-session', {
+    sessionId: SID2,
+    hostName: 'Nate',
+    venmoHandle: '@nate',
+    hostDisplayName: 'Nate P.',
+    items: [
+      { id: '0', name: 'Wine Bottle', price: 30, quantity: 3,
+        units: [
+          { shared: false, claims: [], dispute: null },
+          { shared: false, claims: [], dispute: null },
+          { shared: false, claims: [], dispute: null },
+        ] },
+    ],
+    subtotal: 30, tax: 3, tipPercent: 20, currency: 'USD', exchangeRate: 1,
+  });
+  await wait(150);
+  let coverUpdated = null;
+  host2.on('items-updated', p => { coverUpdated = p; });
+  host2.emit('cover-item', { sessionId: SID2, itemId: '0' });
+  await wait(200);
+  const wine = coverUpdated && coverUpdated.items && coverUpdated.items[0];
+  log('cover-item: all units solely claimed by actor and item.covered=true',
+    wine &&
+    wine.covered === true &&
+    wine.units.length === 3 &&
+    wine.units.every(u => u.claims.length === 1 && u.claims[0] === 'Nate'));
+  host2.close();
+
+  // ─── resolve-dispute accept:true (ownership transfer) ────────────────────
+  const SID3 = SID + '_accept';
+  const host3 = conn(); await new Promise(r => host3.on('connect', r));
+  host3.emit('create-session', {
+    sessionId: SID3,
+    hostName: 'Nate',
+    venmoHandle: '@nate',
+    hostDisplayName: 'Nate P.',
+    items: [
+      { id: '0', name: 'Burger', price: 20, quantity: 1,
+        units: [{ shared: false, claims: ['Nate'], dispute: null }] },
+    ],
+    subtotal: 20, tax: 2, tipPercent: 0, currency: 'USD', exchangeRate: 1,
+  });
+  await wait(150);
+  const bob = conn(); await new Promise(r => bob.on('connect', r));
+  let acceptUpdated = null;
+  bob.on('items-updated', p => { acceptUpdated = p; });
+  host3.on('items-updated', p => { acceptUpdated = p; });
+  bob.emit('join-session', { sessionId: SID3, guestName: 'Bob' });
+  await wait(150);
+  bob.emit('dispute-unit', { sessionId: SID3, itemId: '0', unitIndex: 0 });
+  await wait(200);
+  // Nate (owner) accepts — transfers ownership to Bob (the disputer)
+  host3.emit('resolve-dispute', { sessionId: SID3, itemId: '0', unitIndex: 0, accept: true });
+  await wait(200);
+  const burger = acceptUpdated && acceptUpdated.items && acceptUpdated.items[0];
+  log('resolve-dispute(accept): claims becomes [disputer] and dispute cleared',
+    burger &&
+    burger.units[0].claims.length === 1 &&
+    burger.units[0].claims[0] === 'Bob' &&
+    burger.units[0].dispute === null);
+  host3.close(); bob.close();
+
   // ─── payment two-state ────────────────────────────────────────────────────
   alex.emit('mark-paid', { sessionId: SID, guestName: 'Alex' });
   await wait(120);
