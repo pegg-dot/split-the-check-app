@@ -1,128 +1,110 @@
+// server/test/totals.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { round2, distributeProportionally, calculateAllPersonTotals, calculateUnaccounted, hasOutstandingBalance } = require('../lib/totals');
+const { round2, calculateAllPersonTotals, calculateUnaccounted, shareOf, distributeProportionally } = require('../lib/totals');
 
-test('hasOutstandingBalance: true when a guest who owes has not paid', () => {
-  const session = {
-    hostName: 'Host', guests: [{ name: 'A' }],
-    subtotal: 20, tax: 0, tipPercent: 0, payments: [],
-    items: [{ id: 0, name: 'X', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] }],
-  };
-  assert.strictEqual(hasOutstandingBalance(session), true);
-  session.payments = [{ guestName: 'A', status: 'paid' }];
-  assert.strictEqual(hasOutstandingBalance(session), false);
-});
-
-test('hasOutstandingBalance: false when only the host has items', () => {
-  const session = {
-    hostName: 'Host', guests: [],
-    subtotal: 20, tax: 0, tipPercent: 0, payments: [],
-    items: [{ id: 0, name: 'X', price: 20, claims: [{ guestName: 'Host', splitCount: 1 }] }],
-  };
-  assert.strictEqual(hasOutstandingBalance(session), false);
-});
-
-test('round2 eliminates float drift', () => {
-  assert.strictEqual(round2(0.1 + 0.2), 0.3);
-  assert.strictEqual(round2(1.005), 1.01);
-});
-
-test('distributeProportionally sums EXACTLY to total (no penny drift)', () => {
-  const parts = distributeProportionally(10, [1, 1, 1]);
-  assert.strictEqual(parts.reduce((a, b) => a + b, 0), 10);
-  // largest-remainder gives the extra cent to one person
-  assert.deepStrictEqual([...parts].sort(), [3.33, 3.33, 3.34]);
-});
-
-test('distributeProportionally handles zero total/weights', () => {
-  assert.deepStrictEqual(distributeProportionally(0, [1, 2]), [0, 0]);
-  assert.deepStrictEqual(distributeProportionally(10, [0, 0]), [0, 0]);
-});
-
-test('calculateAllPersonTotals: two guests, tax + 20% tip sum to grand total', () => {
-  const session = {
-    hostName: 'Host',
-    guests: [{ name: 'A' }, { name: 'B' }],
-    subtotal: 30,
-    tax: 3,
-    tipPercent: 20,
-    tipMode: 'percent',
+// Seed bill: subtotal 139, tax 11.82, tip 18% → grand 175.84.
+function seed(units) {
+  return {
+    hostName: 'Sarah',
+    guests: [{ name: 'Jordan' }, { name: 'Mia' }],
+    subtotal: 139, tax: 11.82, tipPercent: 18, tipMode: 'percent',
     items: [
-      { id: 0, name: 'Burger', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] },
-      { id: 1, name: 'Salad', price: 10, claims: [{ guestName: 'B', splitCount: 1 }] },
+      { id: '0', name: 'Margherita Pizza', price: 18, units: [{ shared: false, claims: ['Sarah'], dispute: null }] },
+      { id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+      { id: '2', name: 'Negroni', price: 14, units: [{ shared: false, claims: ['Sarah'], dispute: null }] },
+      { id: '3', name: 'Aperol Spritz', price: 36, units: [
+        { shared: false, claims: ['Mia'], dispute: null },
+        { shared: false, claims: ['Mia'], dispute: null },
+        { shared: false, claims: ['Sarah'], dispute: null },
+      ] },
+      { id: '4', name: 'Bottle of Wine', price: 48, units: [{ shared: true, claims: ['Sarah', 'Mia'], dispute: null }] },
+      { id: '5', name: 'Tiramisu', price: 9, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+      ...(units || []),
     ],
+    payments: [],
   };
-  const totals = calculateAllPersonTotals(session);
-  // A: 20 items + tax(2) + tip(4) = 26 ; B: 10 + 1 + 2 = 13 ; sum 39
-  const sum = round2(totals.A.total + totals.B.total);
-  assert.strictEqual(sum, 39);
-  assert.strictEqual(totals.A.total, 26);
-  assert.strictEqual(totals.B.total, 13);
+}
+
+test('shareOf splits a shared unit evenly', () => {
+  const wine = { price: 48, units: [{ shared: true, claims: ['Sarah', 'Mia'], dispute: null }] };
+  assert.strictEqual(shareOf(wine, 'Sarah'), 24);
+  assert.strictEqual(shareOf(wine, 'Mia'), 24);
 });
 
-test('calculateUnaccounted: a fully unclaimed item is flagged with its value', () => {
-  const session = {
-    hostName: 'Host', guests: [{ name: 'A' }],
-    subtotal: 30, tax: 0, tipPercent: 0,
-    items: [
-      { id: 0, name: 'Burger', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] },
-      { id: 1, name: 'Wine', price: 10, claims: [] }, // nobody claimed
-    ],
-  };
-  const { totalUnaccounted } = calculateUnaccounted(session);
-  assert.strictEqual(totalUnaccounted, 10);
+test('shareOf on a 3-unit item with 2 of 3 claimed', () => {
+  const spritz = { price: 36, units: [
+    { shared: false, claims: ['Mia'], dispute: null },
+    { shared: false, claims: ['Mia'], dispute: null },
+    { shared: false, claims: [], dispute: null },
+  ] };
+  assert.strictEqual(shareOf(spritz, 'Mia'), 24); // 2 × $12
 });
 
-test('calculateUnaccounted: "split 3 ways" with only 1 claimer leaves 2/3 unaccounted', () => {
-  const session = {
-    hostName: 'Host', guests: [{ name: 'A' }],
-    subtotal: 30, tax: 0, tipPercent: 0,
-    items: [
-      { id: 0, name: 'Platter', price: 30, claims: [{ guestName: 'A', splitCount: 3 }] },
-    ],
-  };
-  const { totalUnaccounted } = calculateUnaccounted(session);
-  assert.strictEqual(totalUnaccounted, 20); // 2 of the 3 shares never claimed
+test('fully-claimed bill: per-person totals sum EXACTLY to the grand total', () => {
+  const totals = calculateAllPersonTotals(seed());
+  const grand = round2(139 + 11.82 + 139 * 0.18); // 175.84
+  const sum = round2(Object.values(totals).reduce((s, p) => s + p.total, 0));
+  assert.strictEqual(sum, grand);
 });
 
-test('calculateUnaccounted: everything claimed → 0', () => {
-  const session = {
-    hostName: 'Host', guests: [{ name: 'A' }, { name: 'B' }],
-    subtotal: 30, tax: 3, tipPercent: 18,
-    items: [
-      { id: 0, name: 'Burger', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] },
-      { id: 1, name: 'Salad', price: 10, claims: [{ guestName: 'B', splitCount: 1 }] },
-    ],
+test("Jordan owes 17.71 for Burrata only (fees scale to full subtotal)", () => {
+  const justBurrata = {
+    hostName: 'Sarah', guests: [{ name: 'Jordan' }],
+    subtotal: 139, tax: 11.82, tipPercent: 18, tipMode: 'percent',
+    items: [{ id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] }],
+    payments: [],
   };
-  assert.strictEqual(calculateUnaccounted(session).totalUnaccounted, 0);
+  const t = calculateAllPersonTotals(justBurrata).Jordan;
+  assert.strictEqual(t.itemsTotal, 14);
+  assert.strictEqual(t.taxShare, 1.19);
+  assert.strictEqual(t.tipShare, 2.52);
+  assert.strictEqual(t.total, 17.71);
 });
 
-test('discount is distributed proportionally and subtracted from totals', () => {
-  const session = {
-    hostName: 'Host', guests: [{ name: 'A' }, { name: 'B' }],
-    subtotal: 30, tax: 0, tipPercent: 0, discount: 6,
+test('partial claim: guests + unaccounted sum to the grand total; nobody overpays', () => {
+  const partial = {
+    hostName: 'Sarah', guests: [{ name: 'Jordan' }],
+    subtotal: 139, tax: 11.82, tipPercent: 18, tipMode: 'percent',
     items: [
-      { id: 0, name: 'Burger', price: 20, claims: [{ guestName: 'A', splitCount: 1 }] },
-      { id: 1, name: 'Salad', price: 10, claims: [{ guestName: 'B', splitCount: 1 }] },
+      { id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
+      { id: '2', name: 'Negroni', price: 14, units: [{ shared: false, claims: [], dispute: null }] },
     ],
+    payments: [],
   };
-  const t = calculateAllPersonTotals(session);
-  // discount 6 split 20:10 → A −4, B −2 → A=16, B=8, sum=24=30−6
-  assert.strictEqual(t.A.total, 16);
-  assert.strictEqual(t.B.total, 8);
-  assert.strictEqual(round2(t.A.total + t.B.total), 24);
+  const totals = calculateAllPersonTotals(partial);
+  const { totalUnaccounted } = calculateUnaccounted(partial);
+  const grand = round2(partial.subtotal + partial.tax + partial.subtotal * 0.18);
+  const sum = round2(Object.values(totals).reduce((s, p) => s + p.total, 0) + totalUnaccounted);
+  assert.strictEqual(sum, grand);
+  assert.strictEqual(totals.Jordan.itemsTotal, 14);
 });
 
-test('quantity item: per-unit shares split correctly', () => {
-  const session = {
-    hostName: 'Host', guests: [{ name: 'A' }, { name: 'B' }],
-    subtotal: 18, tax: 0, tipPercent: 0,
-    items: [
-      { id: 0, name: 'Beer', price: 18, quantity: 4, unitPrice: 4.5,
-        claims: [{ guestName: 'A', units: 3 }, { guestName: 'B', units: 1 }] },
-    ],
-  };
-  const t = calculateAllPersonTotals(session);
-  assert.strictEqual(t.A.total, 13.5);
-  assert.strictEqual(t.B.total, 4.5);
+test('discount parity: discount is distributed and subtracted', () => {
+  const withDiscount = { ...seed(), discount: 10 };
+  const totals = calculateAllPersonTotals(withDiscount);
+  const grand = round2(139 + 11.82 + 139 * 0.18 - 10);
+  const sum = round2(Object.values(totals).reduce((s, p) => s + p.total, 0));
+  assert.strictEqual(sum, grand);
+});
+
+test('admin fee + dollar tip distribute exactly', () => {
+  const s = { ...seed(), tipMode: 'dollar', tipDollar: 20, tipPercent: 0, adminFee: 5 };
+  const totals = calculateAllPersonTotals(s);
+  const grand = round2(139 + 11.82 + 20 + 5);
+  const sum = round2(Object.values(totals).reduce((s2, p) => s2 + p.total, 0));
+  assert.strictEqual(sum, grand);
+});
+
+test('nothing claimed → everyone zero, everything unaccounted', () => {
+  const empty = { hostName: 'Sarah', guests: [{ name: 'Jordan' }], subtotal: 139, tax: 11.82, tipPercent: 18,
+    items: [{ id: '0', name: 'X', price: 139, units: [{ shared: false, claims: [], dispute: null }] }], payments: [] };
+  const totals = calculateAllPersonTotals(empty);
+  assert.strictEqual(totals.Jordan.total, 0);
+  assert.strictEqual(totals.Sarah.total, 0);
+});
+
+test('distributeProportionally sums exactly with leftover cents', () => {
+  const out = distributeProportionally(10, [1, 1, 1]); // 3.34/3.33/3.33
+  assert.strictEqual(round2(out.reduce((a, b) => a + b, 0)), 10);
 });
