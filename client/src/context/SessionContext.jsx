@@ -16,7 +16,7 @@ const initialState = {
   hostDisplayName: null, // verified Venmo display name
 
   // Receipt items from AI
-  items: [], // { id, name, price, claims: [{ guestName, splitCount }] }
+  items: [], // { id, name, price, units: [{ shared, claims: [name], dispute }], covered?, quantity, unitPrice }
 
   // Tip & tax (host sets tip for the whole table)
   subtotal: 0,
@@ -74,9 +74,11 @@ function sessionReducer(state, action) {
       return { ...state, items, subtotal };
     }
     case 'ADD_ITEM': {
-      const newId = String(Math.max(0, ...state.items.map(i => Number(i.id) || 0)) + 1);
-      const qty = action.quantity || 1;
-      const items = normalizeItems([...state.items, { id: newId, name: action.name, price: action.price, quantity: qty, unitPrice: action.unitPrice || action.price, units: [{ shared: false, claims: [], dispute: null }] }]);
+      const numericIds = state.items.map(i => Number(i.id)).filter(n => !Number.isNaN(n));
+      const newId = String((numericIds.length ? Math.max(...numericIds) : -1) + 1);
+      const qty = Math.max(1, Math.round(action.quantity || 1));
+      // No `units` field → normalizeItems builds `qty` open units from quantity.
+      const items = normalizeItems([...state.items, { id: newId, name: action.name, price: action.price, quantity: qty }]);
       const subtotal = items.reduce((sum, item) => sum + item.price, 0);
       return { ...state, items, subtotal };
     }
@@ -287,7 +289,7 @@ export function toUSD(amount, exchangeRate = 1) {
 export function getAllParticipants(state) {
   const names = new Set();
   if (state.hostName) names.add(state.hostName);
-  for (const guest of state.guests) names.add(guest.name);
+  for (const guest of (state.guests || [])) names.add(guest.name);
   return Array.from(names);
 }
 

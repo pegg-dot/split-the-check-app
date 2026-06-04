@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateAllPersonTotals, calculatePersonTotal, calculateUnaccounted, round2, shareOf } from './SessionContext';
+import { calculateAllPersonTotals, calculatePersonTotal, calculateUnaccounted, round2, shareOf, distributeProportionally } from './SessionContext';
 
 const seed = () => ({
   hostName: 'Sarah', guests: [{ name: 'Jordan' }, { name: 'Mia' }],
@@ -54,5 +54,8 @@ describe('SessionContext money math (unit model)', () => {
         { id: '1', name: 'Burrata', price: 14, units: [{ shared: false, claims: ['Jordan'], dispute: null }] },
         { id: '2', name: 'Negroni', price: 14, units: [{ shared: false, claims: [], dispute: null }] }] };
     expect(calculatePersonTotal(partial, 'Jordan').unclaimedItems.length).toBe(1);
+  });
+  it('distributeProportionally sums exactly with leftover cents', () => {
+    expect(round2(distributeProportionally(10, [1, 1, 1]).reduce((a, b) => a + b, 0))).toBe(10);
   });
 });
