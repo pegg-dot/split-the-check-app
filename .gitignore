@@ -11,3 +11,6 @@ Thumbs.db
 
 # persistent session store
 data/
+
+# Fetched design-system bundle (reference only, ~3.4MB incl. images)
+design_system_reference/

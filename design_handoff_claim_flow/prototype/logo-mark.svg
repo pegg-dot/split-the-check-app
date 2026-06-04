@@ -1,0 +1,7 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Split the Check">
+  <path d="M14 8 q0 -3 3 -3 h14 q3 0 3 3 v29 l-3.33 2.6 -3.33 -2.6 -3.34 2.6 -3.33 -2.6 -3.34 2.6 -3.33 -2.6 V8 z" fill="#FAF9F7" stroke="#1A1A1A" stroke-width="2.2" stroke-linejoin="round"></path>
+  <line x1="19" y1="14.5" x2="29" y2="14.5" stroke="#9A9A9A" stroke-width="2" stroke-linecap="round"></line>
+  <line x1="19" y1="20.5" x2="25.5" y2="20.5" stroke="#9A9A9A" stroke-width="2" stroke-linecap="round"></line>
+  <circle cx="31.5" cy="30.5" r="8.5" fill="#E8553D"></circle>
+  <path d="M27.9 30.7 l2.5 2.4 4.3 -4.9" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>

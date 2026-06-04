@@ -1,0 +1,162 @@
+/* =====================================================================
+   Split the Check — Color & Type Foundations  (ORGANIC EDITION)
+   ---------------------------------------------------------------------
+   The canonical brand system: warm Claude-clay palette, serif accents,
+   hand-drawn touches, friendly rounded cards — Stripe-clean × Airbnb-warm.
+   Original receipt-coral source: pegg-dot/split-the-check (client/src/index.css).
+   Token NAMES are kept stable (--coral = the clay accent) so everything
+   downstream inherits the organic direction automatically.
+
+   Load fonts (Google Fonts) alongside this file:
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet">
+   ===================================================================== */
+
+:root {
+  /* ---------- Ink (warm near-black text) ---------- */
+  --ink:        #2B2620;   /* primary text          */
+  --ink-2:      #6F665A;   /* secondary text        */
+  --ink-3:      #A89E8F;   /* muted / captions      */
+
+  /* ---------- Paper (warm surfaces) ---------- */
+  --paper:      #ffffff;   /* base card / panel     */
+  --paper-warm: #F5EEE2;   /* warm surface          */
+  --paper-cream:#FBF7F0;   /* cream backdrop        */
+  --line:       #EBE2D3;   /* hairline border       */
+  --line-soft:  #F1EADD;   /* faint divider         */
+
+  /* ---------- Clay — primary brand accent (token kept as --coral) ---------- */
+  --coral:        #D4774E; /* the warm clay accent  */
+  --coral-deep:   #BC5F39; /* hover / pressed       */
+  --coral-wash:   #F2DECE; /* soft tint fill        */
+  --coral-edge:   #E6C3A9; /* tint border           */
+
+  /* ---------- Semantic (warmed) ---------- */
+  --sage:       #7C9B73;   /* success / paid        */
+  --sage-wash:  #E4EBDD;
+  --amber:      #D9A441;   /* warning / pending (gold) */
+  --amber-wash: #F6EBD2;
+  --venmo:      #008cff;   /* Venmo rail reference only — not a UI color */
+  --venmo-deep: #0074d4;
+
+  /* ---------- Contextual chips (warm-tuned) ---------- */
+  --info-bg:      #E7ECEF;  --info-fg:   #51707F;  --info-edge:  #BFD2DB; /* dusty blue */
+  --claim-bg:     #F2DECE;  --claim-fg:  #BC5F39;  --claim-edge: #E6C3A9; /* clay: disputes / "X left" */
+  --share-bg:     #E4EBDD;  --share-fg:  #46603F;  --share-edge: #C2D4BC; /* sage: "I shared this" */
+
+  /* ---------- Type families ---------- */
+  --font-ui:      'Inter', system-ui, -apple-system, sans-serif;        /* UI + body workhorse (as-built) */
+  --font-display: 'Newsreader', Georgia, 'Times New Roman', serif;      /* organic display accents        */
+  --font-mono:    ui-monospace, 'SF Mono', 'Menlo', 'Roboto Mono', monospace; /* receipt numerals          */
+
+  /* ---------- Radii (organic, generous) ---------- */
+  --r-sm:  8px;
+  --r-md:  12px;
+  --r-lg:  16px;
+  --r-xl:  20px;
+  --r-2xl: 28px;   /* large tactile cards */
+  --r-card: 24px;  /* friendly Airbnb-style item cards */
+  --r-pill: 999px;
+
+  /* ---------- Shadows (soft, warm-tinted) ---------- */
+  --shadow-sm: 0 1px 2px rgba(60, 40, 24, 0.05);
+  --shadow-md: 0 4px 14px rgba(60, 40, 24, 0.09);
+  --shadow-lg: 0 10px 30px rgba(60, 40, 24, 0.16);
+  --shadow-coral: 0 8px 22px rgba(212, 119, 78, 0.30);
+
+  /* ---------- Motion (calm, springy) ---------- */
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);   /* settle */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);/* gentle overshoot */
+  --t-fast:   0.15s;
+  --t-med:    0.28s;
+  --t-slow:   0.5s;
+
+  /* ---------- Spacing scale ---------- */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px;
+}
+
+/* =====================================================================
+   Semantic type styles — apply directly or copy into components
+   ===================================================================== */
+
+.t-display {            /* big organic moments: hero, "Your Share" */
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 2.75rem;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.t-display-italic {     /* expressive accent — the hand-drawn voice */
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--coral);
+}
+
+.t-h1 {
+  font-family: var(--font-ui);
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--ink);
+}
+
+.t-h2 {
+  font-family: var(--font-ui);
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--ink);
+}
+
+.t-h3 {
+  font-family: var(--font-ui);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.t-body {
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.t-label {              /* input labels, eyebrows */
+  font-family: var(--font-ui);
+  font-size: 0.813rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.t-eyebrow {            /* uppercase section tags */
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.t-mono {               /* receipt numerals — tabular */
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.t-caption {
+  font-family: var(--font-ui);
+  font-size: 0.813rem;
+  color: var(--ink-3);
+}
