@@ -11,6 +11,7 @@ const { createRateLimiter } = require('./lib/rate-limit');
 const { sanitizeScan, sanitizeName } = require('./lib/sanitize');
 const { sendEmail, notifyEnabled } = require('./lib/notify');
 const { calculateAllPersonTotals, hasOutstandingBalance } = require('./lib/totals');
+const { applyVerb, normalizeItem, normalizeItems } = require('./lib/claim-verbs');
 
 const app = express();
 const server = http.createServer(app);
@@ -365,7 +366,7 @@ io.on('connection', (socket) => {
     session.hostName = hostName ?? session.hostName;
     session.venmoHandle = venmoHandle ?? session.venmoHandle;
     if (hostDisplayName) session.hostDisplayName = hostDisplayName;
-    session.items = items;
+    session.items = normalizeItems(items);
     session.subtotal = subtotal;
     session.tax = tax;
     if (tipPercent !== undefined) session.tipPercent = tipPercent;
@@ -437,165 +438,118 @@ io.on('connection', (socket) => {
     console.log(`${name} joined session ${sessionId}`);
   });
 
-  // Resolve the acting identity for a mutation. Falls back to the payload name
-  // for older clients, but a bound (guest) identity always wins.
+  // Resolve the acting identity for a mutation. For guest sockets the server-
+  // bound name always wins (prevents spoofing). For host sockets the payload
+  // name is used when provided so the host can act on behalf of others; if
+  // payloadName is null/undefined the host's own name is returned.
   function actorName(payloadName) {
     const meta = socketMeta.get(socket.id);
     if (meta && !meta.isHost) return meta.name; // guests locked to themselves
-    return payloadName; // host (or unbound legacy socket) may act broadly
+    if (meta && meta.name && !payloadName) return meta.name; // host acting as self
+    return payloadName; // host acting on behalf of a named person (or legacy)
   }
 
-  // Someone claims an item
-  socket.on('claim-item', ({ sessionId, itemId, guestName, splitCount }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(guestName);
-    if (!actor) return;
-
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-    if (!Array.isArray(item.claims)) item.claims = [];
-
-    // Don't allow claiming if this person already claimed it
-    const existingClaim = item.claims.find(c => c.guestName === actor);
-    if (existingClaim) return;
-
-    item.claims.push({ guestName: actor, splitCount });
-    delete item.dispute;
+  // ── Shared helper: find item, apply pure transform, persist, broadcast ──────
+  function withItem(session, sessionId, itemId, transform) {
+    const idx = session.items.findIndex(i => String(i.id) === String(itemId));
+    if (idx === -1) return;
+    const updated = transform(session.items[idx]);
+    if (!updated) return; // transform returns null = not allowed / no-op
+    session.items[idx] = updated;
     store.saveSession(session);
-    io.to(sessionId).emit('item-claimed', { itemId, guestName: actor, splitCount, items: session.items });
+    io.to(sessionId).emit('items-updated', { items: session.items });
+  }
+
+  // ── Verb handlers (unit model, identity-locked) ───────────────────────────
+
+  socket.on('grab-unit', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (u && u.dispute) return null; // no acting on a disputed unit
+      return applyVerb(item, 'grab', { unitIndex, me });
+    });
   });
 
-  // Someone unclaims an item
-  socket.on('unclaim-item', ({ sessionId, itemId, guestName }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(guestName);
-    if (!actor) return;
-
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-    if (!Array.isArray(item.claims)) item.claims = [];
-
-    // If there's an active dispute, auto-assign to the disputer
-    const dispute = item.dispute;
-    item.claims = item.claims.filter(c => c.guestName !== actor);
-
-    if (dispute && dispute.by !== actor) {
-      // Auto-claim for the disputer
-      item.claims.push({ guestName: dispute.by, splitCount: 1 });
-      delete item.dispute;
-      console.log(`Auto-assigned "${item.name}" to ${dispute.by} after ${actor} released`);
-    } else {
-      delete item.dispute;
-    }
-
-    store.saveSession(session);
-    io.to(sessionId).emit('item-unclaimed', { itemId, guestName: actor, items: session.items });
+  socket.on('split-unit', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (u && u.dispute) return null;
+      return applyVerb(item, 'split', { unitIndex, me });
+    });
   });
 
-  // Someone disputes another person's claim
-  socket.on('dispute-item', ({ sessionId, itemId, disputerName }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(disputerName);
-    if (!actor) return;
-
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-
-    item.dispute = { by: actor };
-    store.saveSession(session);
-    console.log(`Dispute: ${actor} disputes item "${item.name}" in session ${sessionId}`);
-    io.to(sessionId).emit('item-disputed', { itemId, disputerName: actor, items: session.items });
+  socket.on('join-unit', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (u && u.dispute) return null;
+      return applyVerb(item, 'join', { unitIndex, me });
+    });
   });
 
-  // Someone cancels their dispute
-  socket.on('cancel-dispute', ({ sessionId, itemId, disputerName }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(disputerName);
-
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-
-    // Only the person who filed the dispute can cancel it
-    if (item.dispute && item.dispute.by === actor) {
-      delete item.dispute;
-      store.saveSession(session);
-      console.log(`Dispute cancelled: ${actor} withdrew dispute on "${item.name}" in session ${sessionId}`);
-      io.to(sessionId).emit('dispute-cancelled', { itemId, items: session.items });
-    }
+  socket.on('release-unit', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (!u || !u.claims.includes(me)) return null; // only a claimant can release
+      return applyVerb(item, 'release', { unitIndex, me });
+    });
   });
 
-  // Guest shares an already-claimed item — updates all existing claimers' splitCount
-  socket.on('share-item', ({ sessionId, itemId, guestName, splitCount }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(guestName);
-    if (!actor) return;
-
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-    if (!Array.isArray(item.claims)) item.claims = [];
-
-    // Guard: person already claimed this item
-    if (item.claims.some(c => c.guestName === actor)) return;
-
-    // Minimum splitCount = existing claimers + 1
-    const minCount = item.claims.length + 1;
-    const finalCount = Math.max(minCount, splitCount);
-
-    // Update every existing claim to the new splitCount
-    item.claims = item.claims.map(c => ({ ...c, splitCount: finalCount }));
-    // Add this person's claim
-    item.claims.push({ guestName: actor, splitCount: finalCount });
-    delete item.dispute;
-
-    store.saveSession(session);
-    console.log(`${actor} shared "${item.name}" (${finalCount} ways) in session ${sessionId}`);
-    io.to(sessionId).emit('item-claimed', { items: session.items });
+  socket.on('cover-unit', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (u && u.dispute) return null;
+      return applyVerb(item, 'coverUnit', { unitIndex, me });
+    });
   });
 
-  // Claim N units from a quantity item (quantity > 1)
-  socket.on('claim-units', ({ sessionId, itemId, guestName, units }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(guestName);
-    if (!actor) return;
-    const item = session.items.find(i => i.id === itemId);
-    if (!item || (item.quantity || 1) <= 1) return;
-    if (!Array.isArray(item.claims)) item.claims = [];
-
-    const totalClaimed = item.claims.reduce((sum, c) => sum + (c.units || 0), 0);
-    const available    = item.quantity - totalClaimed;
-    const actualUnits  = Math.min(Math.max(1, units), available);
-    if (actualUnits <= 0) return;
-
-    const existing = item.claims.find(c => c.guestName === actor);
-    if (existing) {
-      existing.units = (existing.units || 0) + actualUnits;
-    } else {
-      item.claims.push({ guestName: actor, units: actualUnits });
-    }
-    delete item.dispute;
-    store.saveSession(session);
-    console.log(`${actor} claimed ${actualUnits} units of "${item.name}" in session ${sessionId}`);
-    io.to(sessionId).emit('item-claimed', { items: session.items });
+  socket.on('cover-item', ({ sessionId, itemId }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      if (normalizeItem(item).units.some(u => u.dispute)) return null; // no covering a disputed item
+      return applyVerb(item, 'coverItem', { me });
+    });
   });
 
-  // Release a guest's unit claim
-  socket.on('unclaim-units', ({ sessionId, itemId, guestName }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const actor = actorName(guestName);
-    if (!actor) return;
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-    if (!Array.isArray(item.claims)) item.claims = [];
-    item.claims = item.claims.filter(c => c.guestName !== actor);
-    store.saveSession(session);
-    io.to(sessionId).emit('item-unclaimed', { items: session.items });
+  socket.on('dispute-unit', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      const others = u ? u.claims.filter(n => n !== me) : [];
+      if (!u || u.shared || u.dispute || u.claims.includes(me) || others.length === 0) return null; // only dispute a solo unit held by someone else
+      return applyVerb(item, 'dispute', { unitIndex, me });
+    });
+  });
+
+  socket.on('resolve-dispute', ({ sessionId, itemId, unitIndex, accept }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (!u || !u.dispute || !u.claims.includes(me) || u.dispute.by === me) return null; // only the current OWNER resolves
+      return applyVerb(item, accept ? 'resolveAccept' : 'resolveReject', { unitIndex, me });
+    });
+  });
+
+  socket.on('cancel-dispute', ({ sessionId, itemId, unitIndex }) => {
+    const session = getSession(sessionId); if (!session) return;
+    const me = actorName(null); if (!me) return;
+    withItem(session, sessionId, itemId, (item) => {
+      const u = normalizeItem(item).units[unitIndex || 0];
+      if (!u || !u.dispute || u.dispute.by !== me) return null; // only the disputer cancels
+      return applyVerb(item, 'cancel', { unitIndex, me });
+    });
   });
 
   // Guest finished claiming
@@ -649,26 +603,8 @@ io.on('connection', (socket) => {
     io.to(sessionId).emit('payment-updated', { guestName: target, payments: session.payments });
   });
 
-  // Host resolves a dispute by assigning the item to a specific person
-  // (breaks deadlocks where the current claimer won't release).
-  socket.on('resolve-dispute', ({ sessionId, itemId, assignTo }) => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    const meta = socketMeta.get(socket.id);
-    if (!meta || !meta.isHost) return; // host-only
-    const item = session.items.find(i => i.id === itemId);
-    if (!item) return;
-    if (!Array.isArray(item.claims)) item.claims = [];
-    delete item.dispute;
-    if (assignTo) {
-      item.claims = [{ guestName: assignTo, splitCount: 1 }]; // sole owner
-    }
-    store.saveSession(session);
-    io.to(sessionId).emit('item-claimed', { items: session.items });
-  });
-
   // Host one-tap resolves the unclaimed remainder so nothing falls through.
-  // mode: 'me' (host takes all unclaimed) | 'split' (even split among everyone).
+  // mode: 'me' (host grabs all open units) | 'split' (split all open units among everyone).
   socket.on('resolve-leftover', ({ sessionId, mode }) => {
     const session = getSession(sessionId);
     if (!session) return;
@@ -676,35 +612,35 @@ io.on('connection', (socket) => {
     if (!meta || !meta.isHost) return; // host-only
     const participants = [session.hostName, ...session.guests.map(g => g.name)].filter(Boolean);
 
-    for (const item of session.items) {
-      if (!Array.isArray(item.claims)) item.claims = [];
-      if ((item.quantity || 1) > 1) {
-        const claimed = item.claims.reduce((s, c) => s + (c.units || 0), 0);
-        const remaining = item.quantity - claimed;
-        if (remaining <= 0) continue;
-        if (mode === 'me') {
-          const mine = item.claims.find(c => c.guestName === session.hostName);
-          if (mine) mine.units = (mine.units || 0) + remaining;
-          else item.claims.push({ guestName: session.hostName, units: remaining });
+    let changed = false;
+    for (let ii = 0; ii < session.items.length; ii++) {
+      const norm = normalizeItem(session.items[ii]);
+      // Find units with no claimants (fully open)
+      const openIndices = norm.units
+        .map((u, idx) => ({ u, idx }))
+        .filter(({ u }) => u.claims.length === 0)
+        .map(({ idx }) => idx);
+      if (openIndices.length === 0) continue;
+
+      let item = session.items[ii];
+      if (mode === 'me') {
+        for (const idx of openIndices) {
+          item = applyVerb(item, 'grab', { unitIndex: idx, me: session.hostName });
         }
-        // 'split' for quantity items: leave as-is (unit assignment is ambiguous)
-      } else {
-        const splitCount = item.claims[0]?.splitCount || 1;
-        const fullyClaimed = item.claims.length >= splitCount && item.claims.length > 0;
-        if (fullyClaimed) continue;
-        if (mode === 'me') {
-          if (!item.claims.some(c => c.guestName === session.hostName)) {
-            // host absorbs: make host a claimer at the current split, filling the gap
-            item.claims.push({ guestName: session.hostName, splitCount: Math.max(splitCount, item.claims.length + 1) });
-          }
-        } else if (mode === 'split') {
-          item.claims = participants.map(name => ({ guestName: name, splitCount: participants.length }));
+      } else if (mode === 'split') {
+        // Distribute open units round-robin across all participants
+        for (let k = 0; k < openIndices.length; k++) {
+          const idx = openIndices[k];
+          const assignee = participants[k % participants.length];
+          item = applyVerb(item, 'grab', { unitIndex: idx, me: assignee });
         }
       }
-      delete item.dispute;
+      session.items[ii] = item;
+      changed = true;
     }
+    if (!changed) return;
     store.saveSession(session);
-    io.to(sessionId).emit('item-claimed', { items: session.items });
+    io.to(sessionId).emit('items-updated', { items: session.items });
   });
 
   // Host removes a guest (rando joined / mistake) and frees their claims.
@@ -717,12 +653,30 @@ io.on('connection', (socket) => {
     session.guests = (session.guests || []).filter(g => g.name !== guestName);
     session.payments = (session.payments || []).filter(p => p.guestName !== guestName);
     if (Array.isArray(session.doneClaiming)) session.doneClaiming = session.doneClaiming.filter(n => n !== guestName);
-    for (const item of session.items) {
-      if (Array.isArray(item.claims)) item.claims = item.claims.filter(c => c.guestName !== guestName);
-      if (item.dispute?.by === guestName) delete item.dispute;
+
+    // Strip the removed guest from every unit's claims; clear any dispute they filed.
+    // If a unit drops to ≤1 claimant, collapse shared to false.
+    for (let ii = 0; ii < session.items.length; ii++) {
+      const norm = normalizeItem(session.items[ii]);
+      let dirty = false;
+      const newUnits = norm.units.map(u => {
+        const hadName = u.claims.includes(guestName);
+        const hadDispute = u.dispute && u.dispute.by === guestName;
+        if (!hadName && !hadDispute) return u;
+        dirty = true;
+        const claims = u.claims.filter(n => n !== guestName);
+        const shared = claims.length > 1 ? u.shared : false;
+        const dispute = hadDispute ? null : u.dispute;
+        return { shared, claims, dispute };
+      });
+      if (dirty) {
+        session.items[ii] = { ...norm, units: newUnits };
+      }
     }
+
     store.saveSession(session);
     io.to(sessionId).emit('session-updated', session);
+    io.to(sessionId).emit('items-updated', { items: session.items });
   });
 
   socket.on('disconnect', () => {
