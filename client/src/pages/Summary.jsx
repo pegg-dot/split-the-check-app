@@ -1,326 +1,415 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSession, calculateAllPersonTotals, formatPrice as fmtPrice, toUSD } from '../context/SessionContext';
+import {
+  useSession,
+  calculatePersonTotal,
+  calculateAllPersonTotals,
+  getAllParticipants,
+  formatPrice as fmtPrice,
+  toUSD,
+} from '../context/SessionContext';
 import { socket, BACKEND_URL } from '../context/socket';
 import { openVenmo } from '../lib/venmo';
+import { Avatar, toneFor, Icon, Button, Squiggle, SketchCheck } from '../components/ui/index.js';
+
+// ── Pure named exports — no socket/context inside (safe to unit-test) ─────
+
+/**
+ * ShareCard — tinted plate > white sum-card with item rows, Tax, Tip, You owe.
+ * Props: rows [{name, myShare}], taxShare, tipShare, tipPercent (0 = hide label),
+ *        total, host, currency
+ */
+export function ShareCard({ rows = [], taxShare = 0, tipShare = 0, tipPercent = 0, total = 0, host = '', currency = 'USD' }) {
+  const fmt = (n) => fmtPrice(n, currency);
+  return (
+    <div className="plate">
+      <div className="sum-card">
+        {rows.length === 0 && (
+          <div className="srow"><span className="nm" style={{ color: 'var(--ink-3)' }}>No items claimed yet</span></div>
+        )}
+        {rows.map((item, i) => (
+          <div className="srow" key={i}>
+            <span className="nm">{item.name}</span>
+            <span className="pr mono">{fmt(item.myShare)}</span>
+          </div>
+        ))}
+        <div className="srow sub">
+          <span>Tax</span>
+          <span className="mono">{fmt(taxShare)}</span>
+        </div>
+        {tipShare > 0 && (
+          <div className="srow sub">
+            <span>Tip{tipPercent > 0 ? ` · ${tipPercent}%` : ''}</span>
+            <span className="mono">{fmt(tipShare)}</span>
+          </div>
+        )}
+        <div className="srow tot">
+          <span className="nm">You owe {host}</span>
+          <span className="pr mono">{fmt(total)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * PaidList — settled-list of avatar + name + Paid/Pending per person.
+ * Props: people [{name, host, paid}], me (my name)
+ */
+export function PaidList({ people = [], me = '' }) {
+  return (
+    <div className="settled-list">
+      {people.map((p) => (
+        <div className="srow" key={p.name} style={{ borderColor: 'var(--line-2)' }}>
+          <span className="split-meta">
+            <Avatar name={p.name} tone={p.name === me ? 'gold' : toneFor(p.name)} size={28} />
+            <span style={{ fontWeight: 600, color: 'var(--ink)', whiteSpace: 'nowrap' }}>
+              {p.name === me ? 'You' : p.name}
+              {p.host && <span style={{ color: 'var(--ink-3)', fontWeight: 500 }}> · host</span>}
+            </span>
+          </span>
+          {p.paid
+            ? <span className="split-meta" style={{ color: 'var(--sage)', fontWeight: 700 }}>
+                <Icon name="check" size={15} stroke={2.6} /> Paid
+              </span>
+            : <span className="cap">Pending</span>
+          }
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Default export: route component ───────────────────────────────────────
 
 export default function Summary() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const { state, dispatch } = useSession();
 
-  const myName  = state.currentUser?.name;
-  const isHost  = state.currentUser?.isHost;
+  const myName   = state.currentUser?.name;
+  const isHost   = state.currentUser?.isHost;
   const currency = state.currency || 'USD';
-  const formatPrice = (p) => fmtPrice(p, currency);
   const isForeign = currency !== 'USD';
-
-  // Track what our total was the last time the guest was ready to pay.
-  // When a socket update arrives we compare against this to detect changes.
-  const allTotals  = useMemo(() => calculateAllPersonTotals(state), [state]);
-  const myTotal    = allTotals[myName] || { itemsTotal: 0, taxShare: 0, tipShare: 0, adminFeeShare: 0, total: 0, claimedItems: [], unclaimedItems: [] };
-  const myTotalUSD = toUSD(myTotal.total, state.exchangeRate);
-
-  // Change-notification state
-  const [changeAlert, setChangeAlert] = useState(null);
-  // { prevTotal, newTotal, changedBy, itemName }
-  const prevTotalRef = useRef(myTotal.total);
-
-  // Payment state (two-step: pay → confirm). Server is authoritative.
-  const myPayment = state.payments.find(p => p.guestName === myName);
-  const myStatus  = myPayment?.status || (myPayment?.paid ? 'paid' : 'unpaid');
-  const isPaid    = myStatus === 'paid' || myStatus === 'confirmed';
-  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const hostLabel = state.hostDisplayName || state.hostName;
 
-  // ── Socket: listen for real-time item changes ──────────────────────
-  useEffect(() => {
-    if (!socket.connected) socket.connect();
-    socket.emit('rejoin-room', { sessionId, guestName: state.currentUser?.name, isHost: state.currentUser?.isHost });
+  // ── Money (unit model) ──────────────────────────────────────────────
+  const me = calculatePersonTotal(state, myName);
+  const rows = me.claimedItems || [];   // [{name, myShare}]
+  const { taxShare, tipShare, total } = me;
+  const tipPercent = (state.tipMode !== 'dollar' && state.tipPercent > 0) ? state.tipPercent : 0;
+  const venmoAmount = toUSD(total, state.exchangeRate);
 
-    function onItemsSync({ items }) {
-      // Capture who/what changed before dispatching
-      const prevItems = state.items;
+  // ── Payment state (two-step: pay → confirm; server authoritative) ───
+  const myPayment = state.payments?.find(p => p.guestName === myName);
+  const myStatus  = myPayment?.status || (myPayment?.paid ? 'paid' : 'unpaid');
+  const isPaid    = myStatus === 'paid' || myStatus === 'confirmed';
+
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
+
+  // ── Change-detection (totals-based, not per-claim) ──────────────────
+  // Snapshot total at the moment the guest taps Pay. On each items-updated
+  // recompute and compare — if it shifted ≥ $0.01 after they've paid, show banner.
+  const paidTotalRef  = useRef(null);   // total at time of pay tap
+  const [changeAlert, setChangeAlert] = useState(null);
+  // { prevTotal, newTotal }
+  const prevTotalRef  = useRef(total);  // keep in sync after dismiss
+
+  // ── Socket setup (mirrors ClaimItems mount) ─────────────────────────
+  useEffect(() => {
+    if (!socket) return;
+    if (!socket.connected) socket.connect();
+
+    const identity = {
+      sessionId,
+      guestName: myName,
+      isHost: state.currentUser?.isHost,
+    };
+    socket.emit('rejoin-room', identity);
+
+    fetch(`${BACKEND_URL}/api/session/${sessionId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((session) => { if (session) dispatch({ type: 'LOAD_SESSION', session }); })
+      .catch(() => {});
+
+    function onSyncItems({ items }) {
       dispatch({ type: 'SYNC_ITEMS', items });
 
-      // Detect new claims that involve the current guest
+      // Re-express change detection on totals (not on item.claims array)
       if (!myName) return;
-      for (const newItem of items) {
-        const oldItem = prevItems.find(i => i.id === newItem.id);
-        if (!oldItem) continue;
-        const hadClaim = oldItem.claims.some(c => c.guestName === myName);
-        const hasClaim = newItem.claims.some(c => c.guestName === myName);
-        if (!hadClaim && hasClaim) {
-          // Someone else just added this guest to an item (shouldn't usually happen on summary)
-          continue;
-        }
-        // Did someone NEW join a claim on an item this guest already has?
-        if (hadClaim && hasClaim) {
-          const oldClaimers = oldItem.claims.length;
-          const newClaimers = newItem.claims.length;
-          if (newClaimers > oldClaimers) {
-            const newClaimer = newItem.claims.find(c => !oldItem.claims.some(o => o.guestName === c.guestName));
-            if (newClaimer) {
-              // Compute new total after state update (done via SYNC_ITEMS above, but React
-              // won't re-render until next tick — use the items directly)
-              const fakeState = { ...state, items };
-              const newTotals = calculateAllPersonTotals(fakeState);
-              const newTotal  = newTotals[myName]?.total ?? myTotal.total;
-              if (Math.abs(newTotal - prevTotalRef.current) >= 0.01) {
-                setChangeAlert({
-                  prevTotal: prevTotalRef.current,
-                  newTotal,
-                  changedBy: newClaimer.guestName,
-                  itemName:  newItem.name,
-                });
-              }
-            }
-          }
-        }
+      const fakeState = { ...state, items };
+      const newTotal = calculatePersonTotal(fakeState, myName).total;
+
+      // Only alert if already paid and the total shifted materially
+      if (paidTotalRef.current !== null && Math.abs(newTotal - paidTotalRef.current) >= 0.01) {
+        setChangeAlert({ prevTotal: paidTotalRef.current, newTotal });
+      } else if (paidTotalRef.current === null && Math.abs(newTotal - prevTotalRef.current) >= 0.01) {
+        // Not yet paid but total changed — update ref silently (no blocking banner pre-pay)
+        prevTotalRef.current = newTotal;
       }
+    }
+
+    function onPaymentUpdated({ payments }) {
+      if (payments) dispatch({ type: 'SYNC_PAYMENTS', payments });
     }
 
     function onGuestJoined({ guests }) {
       dispatch({ type: 'SYNC_GUESTS', guests });
     }
-    function onSessionUpdated(session) { if (session) dispatch({ type: 'LOAD_SESSION', session }); }
-    function onReconnect() {
-      socket.emit('rejoin-room', { sessionId, guestName: state.currentUser?.name, isHost: state.currentUser?.isHost });
+
+    function onSessionUpdated(session) {
+      if (session) dispatch({ type: 'LOAD_SESSION', session });
     }
 
-    socket.on('item-claimed',      onItemsSync);
-    socket.on('item-unclaimed',    onItemsSync);
-    socket.on('item-disputed',     onItemsSync);
-    socket.on('dispute-cancelled', onItemsSync);
-    socket.on('guest-joined',      onGuestJoined);
-    socket.on('session-updated',   onSessionUpdated);
-    socket.on('connect',           onReconnect);
+    function onReconnect() {
+      socket.emit('rejoin-room', identity);
+    }
+
+    socket.on('items-updated',   onSyncItems);
+    socket.on('payment-updated', onPaymentUpdated);
+    socket.on('guest-joined',    onGuestJoined);
+    socket.on('session-updated', onSessionUpdated);
+    socket.on('connect',         onReconnect);
 
     return () => {
-      socket.off('item-claimed',      onItemsSync);
-      socket.off('item-unclaimed',    onItemsSync);
-      socket.off('item-disputed',     onItemsSync);
-      socket.off('dispute-cancelled', onItemsSync);
-      socket.off('guest-joined',      onGuestJoined);
-      socket.off('session-updated',   onSessionUpdated);
-      socket.off('connect',           onReconnect);
+      socket.off('items-updated',   onSyncItems);
+      socket.off('payment-updated', onPaymentUpdated);
+      socket.off('guest-joined',    onGuestJoined);
+      socket.off('session-updated', onSessionUpdated);
+      socket.off('connect',         onReconnect);
     };
-  }, [dispatch, sessionId, state, myName]);
+  }, [dispatch, sessionId, myName, state.currentUser?.isHost]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep prevTotalRef in sync when the guest explicitly acknowledges the change
   function dismissAlert() {
-    prevTotalRef.current = myTotal.total;
+    // Re-snapshot so a second change is caught relative to the new baseline
+    paidTotalRef.current = changeAlert?.newTotal ?? total;
+    prevTotalRef.current = changeAlert?.newTotal ?? total;
     setChangeAlert(null);
   }
 
-  // ── Venmo payment (two-step: open Venmo, then confirm) ──────────────
-  // We no longer mark "paid" on tap — that lied to the host if the guest
-  // cancelled in Venmo. Tapping opens Venmo (app on mobile, web on desktop);
-  // the guest then confirms they actually sent it.
+  // ── Venmo two-step ──────────────────────────────────────────────────
   function handleVenmoTap() {
     if (!myName || isHost) return;
-    if (changeAlert) return; // block until total change acknowledged
+    if (changeAlert) return; // block until acknowledged
     const noteText = isForeign
-      ? `Split the Check — my share (${formatPrice(myTotal.total)} → USD)`
+      ? `Split the Check — my share (${fmtPrice(total, currency)} → USD)`
       : `Split the Check — my share`;
-    openVenmo({ handle: state.venmoHandle, amount: myTotalUSD, note: noteText });
+    // Snapshot total at moment of tap for post-payment change detection
+    paidTotalRef.current = total;
+    prevTotalRef.current = total;
+    openVenmo({ handle: state.venmoHandle, amount: venmoAmount, note: noteText });
     setAwaitingConfirm(true);
   }
 
   function confirmPaid() {
-    socket.emit('mark-paid', { sessionId, guestName: myName });
+    if (socket) socket.emit('mark-paid', { sessionId });
     dispatch({ type: 'MARK_PAID', guestName: myName, status: 'paid' });
     setAwaitingConfirm(false);
   }
 
   function undoPaid() {
-    socket.emit('reset-paid', { sessionId, guestName: myName });
+    if (socket) socket.emit('reset-paid', { sessionId, guestName: myName });
     dispatch({ type: 'MARK_PAID', guestName: myName, status: 'unpaid' });
   }
 
+  // ── PaidList data ───────────────────────────────────────────────────
+  const allTotals = calculateAllPersonTotals(state);
+  const allParticipants = getAllParticipants(state);
+  const paidListPeople = allParticipants
+    .filter((name) => {
+      // Always include the host; include guests who owe > 0
+      if (name === state.hostName) return true;
+      return (allTotals[name]?.total ?? 0) > 0;
+    })
+    .map((name) => {
+      const payment = state.payments?.find(p => p.guestName === name);
+      const status  = payment?.status || (payment?.paid ? 'paid' : 'unpaid');
+      return {
+        name,
+        host: name === state.hostName,
+        paid: name === state.hostName || status === 'paid' || status === 'confirmed',
+      };
+    });
+
+  // Amount the guest paid (for Settled screen)
+  const paidAmount = paidTotalRef.current ?? total;
+
+  // ────────────────────────────────────────────────────────────────────
+  // SETTLED state
+  // ────────────────────────────────────────────────────────────────────
+  if (isPaid && !awaitingConfirm) {
+    return (
+      <div className="app-shell">
+        <div className="app-body pg settled">
+          <div className="settled-mark">
+            <div className="disc">
+              <SketchCheck size={34} />
+            </div>
+            <Squiggle
+              width={120}
+              color="var(--sage)"
+              style={{ position: 'absolute', bottom: -4, left: '50%', transform: 'translateX(-50%)' }}
+            />
+          </div>
+
+          <div className="disp" style={{ fontSize: '2.2rem', position: 'relative', zIndex: 2 }}>
+            All <span className="serif-i" style={{ color: 'var(--sage)' }}>squared up.</span>
+          </div>
+
+          <p className="lead" style={{ marginTop: 12, position: 'relative', zIndex: 2 }}>
+            You paid {hostLabel} {fmtPrice(paidAmount, currency)}.{' '}
+            The whole table can see it&apos;s handled.
+          </p>
+
+          <PaidList people={paidListPeople} me={myName} />
+
+          <div style={{ flex: 1 }} />
+
+          <Button
+            variant="soft"
+            icon="rotate-ccw"
+            style={{ marginTop: 24 }}
+            onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}
+          >
+            Start a new check
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // YOUR SHARE state (unpaid / awaiting confirm)
+  // ────────────────────────────────────────────────────────────────────
   return (
-    <div className="page">
-      <div className="page-header text-center">
-        <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>🧾</div>
-        <h1>Your Share{myName ? `, ${myName}` : ''}</h1>
-      </div>
+    <div className="app-shell">
+      <div className="app-body pg">
 
-      {/* ── Change alert banner ─────────────────────────────────── */}
-      {changeAlert && (
-        <div style={{
-          padding: '16px',
-          borderRadius: 'var(--radius-lg)',
-          background: '#fff3e0',
-          border: '2px solid #ffb74d',
-          marginBottom: '16px',
-        }}>
-          <p style={{ fontWeight: 700, fontSize: '0.938rem', color: '#e65100', marginBottom: '6px' }}>
-            ⚠️ Your total changed
-          </p>
-          <p style={{ fontSize: '0.875rem', color: '#bf360c', marginBottom: '12px', lineHeight: 1.5 }}>
-            <strong>{changeAlert.changedBy}</strong> just claimed a share of <strong>{changeAlert.itemName}</strong>.
-            Your total updated from <strong>{formatPrice(changeAlert.prevTotal)}</strong> to{' '}
-            <strong>{formatPrice(changeAlert.newTotal)}</strong>.
-          </p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              className="btn btn-sm"
-              style={{ flex: 1, background: '#fff', border: '1.5px solid #ffb74d', color: '#e65100', fontWeight: 700 }}
-              onClick={() => { dismissAlert(); navigate(`/claim/${sessionId}`); }}
-            >
-              Review changes
-            </button>
-            <button
-              className="btn btn-sm"
-              style={{ flex: 1, background: '#fff3e0', border: '1.5px solid #ffb74d', color: '#e65100', fontWeight: 700 }}
-              onClick={dismissAlert}
-            >
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Claimed items breakdown ─────────────────────────────── */}
-      <div className="card mb-16">
-        <h3 className="mb-8" style={{ fontSize: '0.813rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
-          Your items
-        </h3>
-        {myTotal.claimedItems.length === 0 && (
-          <p className="text-muted text-sm" style={{ padding: '12px 0' }}>You haven't claimed any items yet.</p>
-        )}
-        {myTotal.claimedItems.map((item, i) => (
-          <div key={i} className="item-row">
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <span className="item-name">{item.name}</span>
-            </div>
-            <span className="item-price">{formatPrice(item.myShare)}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Unclaimed items warning ─────────────────────────────── */}
-      {myTotal.unclaimedItems.length > 0 && (
-        <div className="card mb-16" style={{ borderColor: 'var(--color-warning)', background: 'var(--color-warning-light)' }}>
-          <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--color-warning)' }}>
-            {myTotal.unclaimedItems.length} item{myTotal.unclaimedItems.length > 1 ? 's' : ''} still unclaimed
-          </p>
-          <p className="text-sm text-muted mt-8">
-            {myTotal.unclaimedItems.map(i => i.name).join(', ')}
-          </p>
-        </div>
-      )}
-
-      {/* ── Totals ─────────────────────────────────────────────── */}
-      <div className="card card-surface mb-24">
-        <div className="total-row">
-          <span>Items</span>
-          <span className="fw-700">{formatPrice(myTotal.itemsTotal)}</span>
-        </div>
-        {myTotal.adminFeeShare > 0 && (
-          <div className="total-row">
-            <span>Admin Fee</span>
-            <span>{formatPrice(myTotal.adminFeeShare)}</span>
-          </div>
-        )}
-        <div className="total-row">
-          <span>Tax</span>
-          <span>{formatPrice(myTotal.taxShare)}</span>
-        </div>
-        <div className="total-row">
-          <span>Tip {state.tipIncluded ? '(included)' : state.tipMode === 'dollar' ? '(flat)' : `(${state.tipPercent}%)`}</span>
-          <span>{formatPrice(myTotal.tipShare)}</span>
-        </div>
-        {myTotal.discountShare > 0 && (
-          <div className="total-row">
-            <span>Discount</span>
-            <span style={{ color: 'var(--color-success, #2e7d32)' }}>−{formatPrice(myTotal.discountShare)}</span>
-          </div>
-        )}
-        <div className="total-row total-row-final">
-          <span>Your total</span>
-          <span>{formatPrice(myTotal.total)}</span>
-        </div>
-        {isForeign && (
-          <div className="total-row" style={{ marginTop: '4px', paddingTop: '8px', borderTop: '1px dashed var(--color-border)' }}>
-            <span className="text-muted text-sm">≈ USD</span>
-            <span className="text-sm fw-700">${myTotalUSD.toFixed(2)}</span>
-          </div>
-        )}
-      </div>
-
-      {/* ── Venmo button ────────────────────────────────────────── */}
-      {!isHost && (
-        <>
-          {isForeign && (
-            <div className="card mb-12" style={{ background: '#e8f5e9', borderColor: '#81c784' }}>
-              <p className="text-sm" style={{ fontWeight: 600, color: '#1b5e20' }}>
-                Receipt is in {currency} — Venmo will charge in USD
-              </p>
-              <p className="text-sm" style={{ color: '#2e7d32', marginTop: '4px' }}>
-                {formatPrice(myTotal.total)} ≈ ${myTotalUSD.toFixed(2)} USD
-                <span style={{ opacity: 0.7, marginLeft: '6px' }}>
-                  (rate: 1 {currency} = ${Number(state.exchangeRate).toFixed(4)})
-                </span>
-              </p>
-            </div>
-          )}
-
-          {isPaid ? (
-            // Already marked paid — show state + undo (covers mistakes)
-            <div className="card" style={{ background: '#e8f5e9', borderColor: '#81c784', textAlign: 'center' }}>
-              <p style={{ fontWeight: 700, color: '#1b5e20' }}>
-                {myStatus === 'confirmed' ? `✓ ${hostLabel} confirmed your payment` : '✓ You marked yourself as paid'}
-              </p>
-              {myStatus !== 'confirmed' && (
-                <button className="btn btn-ghost btn-sm mt-8" onClick={undoPaid}>That was a mistake — undo</button>
-              )}
-            </div>
-          ) : awaitingConfirm ? (
-            // Returned from Venmo — confirm the payment actually went through
-            <div className="card" style={{ borderColor: 'var(--color-accent)' }}>
-              <p style={{ fontWeight: 700, marginBottom: '4px' }}>Did you send the payment?</p>
-              <p className="text-sm text-muted" style={{ marginBottom: '12px' }}>
-                Only confirm if Venmo actually went through — the host sees this.
-              </p>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={confirmPaid}>Yes, I paid {hostLabel}</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setAwaitingConfirm(false)}>Not yet</button>
-              </div>
-              <button className="btn btn-secondary btn-sm mt-8" onClick={handleVenmoTap} style={{ width: '100%' }}>
-                Re-open Venmo
-              </button>
-            </div>
-          ) : changeAlert ? (
-            // Blocked state — can't pay until change is acknowledged
-            <button className="btn btn-venmo" disabled style={{ opacity: 0.45, cursor: 'not-allowed' }}>
-              Pay {hostLabel} ${myTotalUSD.toFixed(2)} on Venmo
-            </button>
-          ) : (
-            <button className="btn btn-venmo" onClick={handleVenmoTap}>
-              Pay {hostLabel} ${myTotalUSD.toFixed(2)} on Venmo
-            </button>
-          )}
-
-          {!isPaid && !awaitingConfirm && (
-            <p className="text-sm text-muted text-center mt-8">
-              {changeAlert
-                ? 'Acknowledge the change above before paying'
-                : 'Opens Venmo. You\'ll confirm here after paying.'}
+        {/* ── Change alert banner (post-pay total shift) ───────────── */}
+        {changeAlert && (
+          <div style={{
+            padding: '16px',
+            borderRadius: 'var(--r-card)',
+            background: 'var(--clay-soft)',
+            border: '1.5px solid var(--clay-edge)',
+            marginBottom: '16px',
+          }}>
+            <p style={{ fontWeight: 700, fontSize: '0.938rem', color: 'var(--clay-deep)', marginBottom: 6 }}>
+              Heads up — your total changed after you paid
             </p>
-          )}
-        </>
-      )}
+            <p style={{ fontSize: '0.875rem', color: 'var(--ink-2)', marginBottom: 12, lineHeight: 1.5 }}>
+              Was {fmtPrice(changeAlert.prevTotal, currency)}, now {fmtPrice(changeAlert.newTotal, currency)}.
+            </p>
+            <Button variant="ghost" onClick={dismissAlert} style={{ width: '100%' }}>
+              Got it
+            </Button>
+          </div>
+        )}
 
-      {isHost && (
-        <div className="text-center">
-          <p className="text-muted">You're the host — you'll collect payments from everyone else.</p>
+        {/* ── Hero ─────────────────────────────────────────────────── */}
+        <div className="sum-hero">
+          <div className="disp" style={{ fontSize: '2.15rem' }}>
+            Your share, <span className="serif-i">{myName}</span>
+          </div>
+          <p className="cap" style={{ marginTop: 6 }}>Just what you ordered — split fair.</p>
         </div>
-      )}
 
-      <button className="btn btn-ghost mt-12" onClick={() => navigate(`/claim/${sessionId}`)}>
-        Edit My Items
-      </button>
+        {/* ── ShareCard ────────────────────────────────────────────── */}
+        <ShareCard
+          rows={rows}
+          taxShare={taxShare}
+          tipShare={tipShare}
+          tipPercent={tipPercent}
+          total={total}
+          host={hostLabel}
+          currency={currency}
+        />
+
+        {isForeign && (
+          <p className="cap" style={{ textAlign: 'center', marginTop: 10 }}>
+            {fmtPrice(total, currency)} ≈ ${venmoAmount.toFixed(2)} USD
+            <span style={{ marginLeft: 6, opacity: 0.7 }}>(rate: 1 {currency} = ${Number(state.exchangeRate).toFixed(4)})</span>
+          </p>
+        )}
+
+        <div style={{ flex: 1 }} />
+
+        {/* ── Payment area ─────────────────────────────────────────── */}
+        {isHost ? (
+          <p className="cap" style={{ textAlign: 'center', marginTop: 24 }}>
+            You&apos;re the host — you&apos;ll collect payments from everyone else.
+          </p>
+        ) : awaitingConfirm ? (
+          /* Returned from Venmo — confirm the payment went through */
+          <div style={{
+            background: 'var(--panel)',
+            borderRadius: 'var(--r-card)',
+            boxShadow: 'var(--sh-card)',
+            padding: '18px 20px',
+            marginTop: 16,
+          }}>
+            <p style={{ fontWeight: 700, marginBottom: 4 }}>Did you send the payment?</p>
+            <p className="cap" style={{ marginBottom: 14 }}>
+              Only confirm if Venmo actually went through — the host sees this.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="clay" style={{ flex: 1 }} onClick={confirmPaid}>
+                Yes, I paid {hostLabel}
+              </Button>
+              <Button variant="ghost" onClick={() => setAwaitingConfirm(false)}>
+                Not yet
+              </Button>
+            </div>
+            <Button
+              variant="soft"
+              style={{ width: '100%', marginTop: 10 }}
+              onClick={handleVenmoTap}
+            >
+              Re-open Venmo
+            </Button>
+          </div>
+        ) : (
+          /* Primary pay CTA */
+          <>
+            <Button
+              variant="clay"
+              icon="arrow-right"
+              style={{ marginTop: 20 }}
+              disabled={!!changeAlert}
+              onClick={handleVenmoTap}
+            >
+              Pay {hostLabel} {fmtPrice(total, currency)}
+            </Button>
+            <p className="pay-note">
+              Sent instantly <b>via Venmo</b> · you both get a receipt
+            </p>
+          </>
+        )}
+
+        {/* ── Undo for paid (covers mistakes) — shown before isPaid flips view */}
+        {isPaid && awaitingConfirm === false && (
+          <div style={{ marginTop: 16, textAlign: 'center' }}>
+            <Button variant="ghost" onClick={undoPaid} style={{ fontSize: '0.8rem' }}>
+              That was a mistake — undo
+            </Button>
+          </div>
+        )}
+
+        {/* ── Confirmed by host badge ─────────────────────────────── */}
+        {myStatus === 'confirmed' && (
+          <p className="cap" style={{ textAlign: 'center', marginTop: 12, color: 'var(--sage)' }}>
+            ✓ {hostLabel} confirmed your payment
+          </p>
+        )}
+
+        <Button
+          variant="ghost"
+          style={{ marginTop: 16, alignSelf: 'center', fontSize: '0.875rem' }}
+          onClick={() => navigate(`/claim/${sessionId}`)}
+        >
+          Edit my items
+        </Button>
+      </div>
     </div>
   );
 }
