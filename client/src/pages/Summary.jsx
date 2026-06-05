@@ -33,10 +33,12 @@ export function ShareCard({ rows = [], taxShare = 0, tipShare = 0, tipPercent = 
             <span className="pr mono">{fmt(item.myShare)}</span>
           </div>
         ))}
-        <div className="srow sub">
-          <span>Tax</span>
-          <span className="mono">{fmt(taxShare)}</span>
-        </div>
+        {taxShare > 0 && (
+          <div className="srow sub">
+            <span>Tax</span>
+            <span className="mono">{fmt(taxShare)}</span>
+          </div>
+        )}
         {tipShare > 0 && (
           <div className="srow sub">
             <span>Tip{tipPercent > 0 ? ` · ${tipPercent}%` : ''}</span>
@@ -108,12 +110,19 @@ export default function Summary() {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
 
   // ── Change-detection (totals-based, not per-claim) ──────────────────
-  // Snapshot total at the moment the guest taps Pay. On each items-updated
+  // Snapshot total at the moment the guest confirms payment. On each items-updated
   // recompute and compare — if it shifted ≥ $0.01 after they've paid, show banner.
-  const paidTotalRef  = useRef(null);   // total at time of pay tap
+  // After reload, use the server-stored paidTotal as the baseline so the alert
+  // survives page refreshes.
+  const paidTotalRef  = useRef(null);   // total at time of confirm (immediate, pre-reload)
   const [changeAlert, setChangeAlert] = useState(null);
   // { prevTotal, newTotal }
   const prevTotalRef  = useRef(total);  // keep in sync after dismiss
+
+  // Keep a live ref to state so the items-updated closure never reads stale settings
+  // (tipPercent, tax, discount can change after mount).
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; });
 
   // ── Socket setup (mirrors ClaimItems mount) ─────────────────────────
   useEffect(() => {
@@ -135,15 +144,21 @@ export default function Summary() {
     function onSyncItems({ items }) {
       dispatch({ type: 'SYNC_ITEMS', items });
 
-      // Re-express change detection on totals (not on item.claims array)
+      // Re-express change detection on totals (not on item.claims array).
+      // Use stateRef so tipPercent/tax/discount/exchangeRate are always current.
       if (!myName) return;
-      const fakeState = { ...state, items };
-      const newTotal = calculatePersonTotal(fakeState, myName).total;
+      const freshState = { ...stateRef.current, items };
+      const newTotal = calculatePersonTotal(freshState, myName).total;
+
+      // Baseline: server-stored paidTotal (survives reload) OR local ref (same session).
+      const myPmt = stateRef.current.payments?.find(p => p.guestName === myName);
+      const baseline = myPmt?.paidTotal ?? paidTotalRef.current;
 
       // Only alert if already paid and the total shifted materially
-      if (paidTotalRef.current !== null && Math.abs(newTotal - paidTotalRef.current) >= 0.01) {
-        setChangeAlert({ prevTotal: paidTotalRef.current, newTotal });
-      } else if (paidTotalRef.current === null && Math.abs(newTotal - prevTotalRef.current) >= 0.01) {
+      if (baseline !== null && (myPmt?.status === 'paid' || myPmt?.status === 'confirmed') &&
+          Math.abs(newTotal - baseline) >= 0.01) {
+        setChangeAlert({ prevTotal: baseline, newTotal });
+      } else if (baseline === null && Math.abs(newTotal - prevTotalRef.current) >= 0.01) {
         // Not yet paid but total changed — update ref silently (no blocking banner pre-pay)
         prevTotalRef.current = newTotal;
       }
@@ -194,14 +209,17 @@ export default function Summary() {
     const noteText = isForeign
       ? `Split the Check — my share (${fmtPrice(total, currency)} → USD)`
       : `Split the Check — my share`;
-    // Snapshot total at moment of tap for post-payment change detection
-    paidTotalRef.current = total;
-    prevTotalRef.current = total;
     openVenmo({ handle: state.venmoHandle, amount: venmoAmount, note: noteText });
     setAwaitingConfirm(true);
   }
 
   function confirmPaid() {
+    // Snapshot the total at the moment the guest asserts they paid (not at Venmo tap).
+    // This is the immediate/local baseline; the server computes its own paidTotal
+    // snapshot independently and that value (myPayment?.paidTotal) is the durable
+    // baseline that survives page reloads.
+    paidTotalRef.current = total;
+    prevTotalRef.current = total;
     if (socket) socket.emit('mark-paid', { sessionId });
     dispatch({ type: 'MARK_PAID', guestName: myName, status: 'paid' });
     setAwaitingConfirm(false);
@@ -265,10 +283,19 @@ export default function Summary() {
 
           <div style={{ flex: 1 }} />
 
+          {/* Undo: visible only when guest-asserted (status 'paid'), hidden once host confirms */}
+          {myStatus === 'paid' && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Button variant="ghost" onClick={undoPaid} style={{ fontSize: '0.8rem', opacity: 0.7 }}>
+                Not yet? Undo
+              </Button>
+            </div>
+          )}
+
           <Button
             variant="soft"
             icon="rotate-ccw"
-            style={{ marginTop: 24 }}
+            style={{ marginTop: 16 }}
             onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}
           >
             Start a new check
@@ -384,15 +411,6 @@ export default function Summary() {
               Sent instantly <b>via Venmo</b> · you both get a receipt
             </p>
           </>
-        )}
-
-        {/* ── Undo for paid (covers mistakes) — shown before isPaid flips view */}
-        {isPaid && awaitingConfirm === false && (
-          <div style={{ marginTop: 16, textAlign: 'center' }}>
-            <Button variant="ghost" onClick={undoPaid} style={{ fontSize: '0.8rem' }}>
-              That was a mistake — undo
-            </Button>
-          </div>
         )}
 
         {/* ── Confirmed by host badge ─────────────────────────────── */}
