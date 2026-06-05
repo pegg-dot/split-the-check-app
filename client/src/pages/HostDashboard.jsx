@@ -282,7 +282,8 @@ export default function HostDashboard() {
   const guests = everyone.filter(p => !p.isHost);
   const expected = round2(guests.reduce((s, p) => round2(s + p.total), 0));
   const collected = round2(guests.filter(p => p.paid).reduce((s, p) => round2(s + p.total), 0));
-  const allSettled = guests.length > 0 && guests.filter(p => p.total > 0).every(p => p.paid);
+  const owingGuests = guests.filter(p => p.total > 0);
+  const allSettled = owingGuests.length > 0 && owingGuests.every(p => p.paid);
 
   // Dollar amount unclaimed by anyone
   const { totalUnaccounted } = calculateUnaccounted(state);
@@ -335,8 +336,8 @@ export default function HostDashboard() {
 
   // Remove a guest who joined by mistake.
   function removeGuest(name) {
-    if (!window.confirm(`Remove ${name} from this split? Their claims will be released.`)) return;
     if (!socket) return;
+    if (!window.confirm(`Remove ${name} from this split? Their claims will be released.`)) return;
     socket.emit('remove-guest', { sessionId, guestName: name });
   }
 

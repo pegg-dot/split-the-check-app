@@ -17,4 +17,13 @@ describe('PersonRow', () => {
     expect(html).toContain('host');
     expect(html).toContain('68');
   });
+  it('renders a guest row with pending pill, items and fees', () => {
+    const html = renderToStaticMarkup(<PersonRow currency="USD" person={{
+      name: 'Jordan', isHost: false, total: 11.39, taxShare: 0.77, tipShare: 1.62,
+      items: [{ name: 'Tiramisu', myShare: 9 }], paid: false, status: 'unpaid', stale: false }} />);
+    expect(html).toContain('Jordan');
+    expect(html).toContain('Tiramisu');
+    expect(html).toContain('11.39');
+    expect(html).toContain('Pending');
+  });
 });
