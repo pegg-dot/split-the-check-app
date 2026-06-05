@@ -1,24 +1,30 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useSession, calculatePersonTotal, formatPrice as fmtPrice, unitPrice } from '../context/SessionContext';
 import { Avatar, AvatarStack, toneFor, Icon, Button, SketchCheck, SheetPortal } from '../components/ui/index.js';
+import { socket, BACKEND_URL } from '../context/socket';
 
 // ── Pure helpers (no socket, no context — safe to unit-test in isolation) ───
 
 /** @pure */
-function UnitRow({ item, u, idx, up, me, onUnit, onMenu }) {
+function UnitRow({ item, u, idx, up, me, onUnit, onMenu, currency = 'USD' }) {
   const mineIn = u.claims.includes(me);
   const others = u.claims.filter((n) => n !== me);
   const isShared = !!u.shared;
-  const open = u.claims.length === 0;
-  const heldByOther = !isShared && others.length > 0 && !mineIn;
-  const sharedNotIn = isShared && !mineIn;
-  const sharedIn = isShared && mineIn;
-  const soloMine = !isShared && mineIn;
+  const disp = u.dispute;
+  const disputeByMe = disp && disp.by === me;
+  const disputeOnMine = disp && mineIn && disp.by !== me;
+  const open = u.claims.length === 0 && !disp;
+  const heldByOther = !isShared && others.length > 0 && !mineIn && !disp;
+  const sharedNotIn = isShared && !mineIn && !disp;
+  const sharedIn = isShared && mineIn && !disp;
+  const soloMine = !isShared && mineIn && !disp;
   const each = u.claims.length ? up / u.claims.length : up;
 
   let tgt;
-  if (mineIn) {
+  if (disputeByMe) {
+    tgt = <span className="utgt-av"><Avatar name={others[0] || '?'} tone={toneFor(others[0])} size={22} /></span>;
+  } else if (mineIn) {
     tgt = <span className="utgt" style={{ background: 'var(--clay)', borderColor: 'var(--clay)' }}><SketchCheck size={13} /></span>;
   } else if (others.length) {
     tgt = <span className="utgt-av">{u.claims.slice(0, 2).map((n) => <Avatar key={n} name={n} tone={toneFor(n)} size={22} />)}</span>;
@@ -26,7 +32,8 @@ function UnitRow({ item, u, idx, up, me, onUnit, onMenu }) {
     tgt = <span className="utgt" />;
   }
 
-  const canTap = open || soloMine || sharedNotIn;
+  // When a dispute is active: not tappable, no ⋯ menu
+  const canTap = !disp && (open || soloMine || sharedNotIn);
   function tap() {
     if (open) onUnit(idx, 'grab');
     else if (soloMine) onUnit(idx, 'release');
@@ -34,37 +41,59 @@ function UnitRow({ item, u, idx, up, me, onUnit, onMenu }) {
   }
 
   let label;
-  if (open) label = <span className="muted">Tap to grab · ${up.toFixed(2)}</span>;
-  else if (soloMine) label = <span className="u-mine">Yours · ${up.toFixed(2)}</span>;
-  else if (heldByOther) label = <span>{others[0]}'s · ${up.toFixed(2)}</span>;
-  else if (sharedNotIn) label = <span>${(up / (u.claims.length + 1)).toFixed(2)} ea if you join</span>;
-  else label = <span className="u-mine">You + {others.length} · ${each.toFixed(2)} ea</span>;
+  if (open) label = <span className="muted">Tap to grab · {fmtPrice(up, currency)}</span>;
+  else if (soloMine) label = <span className="u-mine">Yours · {fmtPrice(up, currency)}</span>;
+  else if (heldByOther) label = <span>{others[0]}'s · {fmtPrice(up, currency)}</span>;
+  else if (sharedNotIn) label = <span>{fmtPrice(up / (u.claims.length + 1), currency)} ea if you join</span>;
+  else if (disp) label = null; // dispute affordance rendered below
+  else label = <span className="u-mine">You + {others.length} · {fmtPrice(each, currency)} ea</span>;
 
   return (
     <div
-      className={`urow ${mineIn ? 'mine' : ''} ${heldByOther ? 'held' : ''}`}
+      className={`urow ${mineIn && !disp ? 'mine' : ''} ${heldByOther ? 'held' : ''}`}
       style={{ cursor: canTap ? 'pointer' : 'default' }}
       onClick={() => { if (canTap) tap(); }}
     >
       {tgt}
       <span className="urow-label">{label}</span>
-      <span className="urow-act">
-        {sharedNotIn && (
+      {!disp && (
+        <span className="urow-act">
+          {sharedNotIn && (
+            <button
+              className="chip-btn chip-join sm"
+              onClick={(e) => { e.stopPropagation(); onUnit(idx, 'join'); }}
+            >
+              <Icon name="plus" size={13} stroke={2.6} /> I’m in
+            </button>
+          )}
           <button
-            className="chip-btn chip-join sm"
-            onClick={(e) => { e.stopPropagation(); onUnit(idx, 'join'); }}
+            className="u-menu"
+            onClick={(e) => { e.stopPropagation(); onMenu(idx); }}
+            title="Options"
           >
-            <Icon name="plus" size={13} stroke={2.6} /> I’m in
+            <Icon name="ellipsis" size={18} stroke={2.2} />
           </button>
-        )}
-        <button
-          className="u-menu"
-          onClick={(e) => { e.stopPropagation(); onMenu(idx); }}
-          title="Options"
-        >
-          <Icon name="ellipsis" size={18} stroke={2.2} />
-        </button>
-      </span>
+        </span>
+      )}
+      {disputeByMe && (
+        <span className="urow-disp ec-wait">
+          Asking {others[0] || 'them'}…
+          <button className="lk" onClick={(e) => { e.stopPropagation(); onUnit(idx, 'cancel'); }}>
+            Never mind
+          </button>
+        </span>
+      )}
+      {disputeOnMine && (
+        <span className="urow-disp ec-mine">
+          <strong>{disp.by}</strong> wants this
+          <button className="lk" onClick={(e) => { e.stopPropagation(); onUnit(idx, 'resolveAccept'); }}>
+            Give it up
+          </button>
+          <button className="solid" onClick={(e) => { e.stopPropagation(); onUnit(idx, 'resolveReject'); }}>
+            No, mine
+          </button>
+        </span>
+      )}
     </div>
   );
 }
@@ -73,10 +102,9 @@ function UnitRow({ item, u, idx, up, me, onUnit, onMenu }) {
  * Pure, exported card component — safe to render in isolation (no useSession,
  * no socket calls). All data comes in via props.
  */
-export function ItemCard({ item, me, onUnit, onMenu }) {
+export function ItemCard({ item, me, onUnit, onMenu, currency = 'USD' }) {
   const multi = item.units.length > 1;
   const up = unitPrice(item);
-  const anyDispute = item.units.some((u) => u.dispute);
 
   if (multi) {
     const mineUnits = item.units.filter((u) => u.claims.includes(me)).length;
@@ -95,7 +123,7 @@ export function ItemCard({ item, me, onUnit, onMenu }) {
           <span className="icard-name">
             {item.name}<span className="icard-qty">×{item.units.length}</span>
           </span>
-          <span className="icard-price mono">${item.price.toFixed(2)}</span>
+          <span className="icard-price mono">{fmtPrice(item.price, currency)}</span>
         </div>
         <div className="ulist">
           {item.units.map((u, i) => (
@@ -108,11 +136,12 @@ export function ItemCard({ item, me, onUnit, onMenu }) {
               me={me}
               onUnit={onUnit}
               onMenu={onMenu}
+              currency={currency}
             />
           ))}
           <div className="ulist-foot">
             <span className="split-meta">
-              ${up.toFixed(2)} each · {openUnits > 0 ? `${openUnits} still open` : 'all spoken for'}
+              {fmtPrice(up, currency)} each · {openUnits > 0 ? `${openUnits} still open` : 'all spoken for'}
             </span>
           </div>
         </div>
@@ -175,7 +204,7 @@ export function ItemCard({ item, me, onUnit, onMenu }) {
             ? <span className="cover-tag"><Icon name="gift" size={12} stroke={2.2} /> covering</span>
             : null}
         </span>
-        <span className="icard-price mono">${item.price.toFixed(2)}</span>
+        <span className="icard-price mono">{fmtPrice(item.price, currency)}</span>
         {!disp && (
           <button
             className="menu-btn"
@@ -211,7 +240,7 @@ export function ItemCard({ item, me, onUnit, onMenu }) {
         <div className="icard-sub">
           <span className="split-meta" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             <AvatarStack names={u.claims} me={me} size={22} />
-            {' '}${(item.price / (u.claims.length + 1)).toFixed(2)} each if you join
+            {' '}{fmtPrice(item.price / (u.claims.length + 1), currency)} each if you join
           </span>
           <button
             className="chip-btn chip-join"
@@ -226,7 +255,7 @@ export function ItemCard({ item, me, onUnit, onMenu }) {
         <div className="icard-sub">
           <span className="split-meta">
             <AvatarStack names={u.claims} me={me} size={22} />
-            {' '}· ${each.toFixed(2)} each{' '}
+            {' '}· {fmtPrice(each, currency)} each{' '}
             {u.claims.length === 1 ? '· waiting for others to tap in' : `· split ${u.claims.length} ways`}
           </span>
         </div>
@@ -264,19 +293,6 @@ export function ItemCard({ item, me, onUnit, onMenu }) {
 // ── Route component ─────────────────────────────────────────────────────────
 
 export default function ClaimItems() {
-  // Lazy socket import keeps this module importable in node test env when
-  // only ItemCard is needed (socket.js accesses window at module level).
-  // eslint-disable-next-line no-undef
-  const { socket, BACKEND_URL } = (() => {
-    try {
-      // dynamic require-style inside function — still bundled by Vite but
-      // only executed when ClaimItems() is actually called.
-      return require('../context/socket');
-    } catch {
-      return { socket: null, BACKEND_URL: '' };
-    }
-  })();
-
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const { state, dispatch } = useSession();
@@ -286,15 +302,19 @@ export default function ClaimItems() {
   const [toastMsg, setToastMsg] = useState(null);
   const [menu, setMenu] = useState(null);     // { id, idx } whose options sheet is open
   const [confirm, setConfirm] = useState(false); // unclaimed-items guard sheet
+  const toastTimer = useRef(null);
 
   const fmt = (p) => fmtPrice(p, state.currency || 'USD');
 
-  // Flash feedback
+  // Flash feedback — timer stored in ref so it is cleared on unmount
   function flash(m) {
     setToastMsg(m);
-    clearTimeout(window.__stc_ot);
-    window.__stc_ot = setTimeout(() => setToastMsg(null), 1800);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 1800);
   }
+
+  // Clear toast timer on unmount
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
 
   // ── Verb → socket event dispatcher ──────────────────────────────────
   function act(itemId, unitIndex, verb) {
@@ -385,12 +405,12 @@ export default function ClaimItems() {
     if (others.length && !isShared && !mineIn) {
       // Held by someone else
       A.push({ icon: 'users', label: 'I split this', sub: `Keeps ${others[0]} on it — others can tap "I'm in"`, onClick: () => act(it.id, idx, 'splitWith') });
-      A.push({ icon: 'gift', label: "I'm covering this", sub: `Pay ${others[0]}'s $${unitPrice(it).toFixed(2)} myself`, onClick: () => act(it.id, idx, 'coverUnit') });
+      A.push({ icon: 'gift', label: "I'm covering this", sub: `Pay ${others[0]}'s ${fmt(unitPrice(it))} myself`, onClick: () => act(it.id, idx, 'coverUnit') });
       A.push({ icon: 'hand', label: 'Actually, this is mine', sub: `Ask ${others[0]} to hand it over`, onClick: () => act(it.id, idx, 'dispute') });
     } else if (isShared && mineIn) {
       // I'm in a split
       A.push({ icon: 'user-minus', label: 'Leave the split', onClick: () => act(it.id, idx, 'leave') });
-      A.push({ icon: 'gift', label: "I'm covering it all instead", sub: `Pay the whole $${unitPrice(it).toFixed(2)}`, onClick: () => act(it.id, idx, 'coverUnit') });
+      A.push({ icon: 'gift', label: "I'm covering it all instead", sub: `Pay the whole ${fmt(unitPrice(it))}`, onClick: () => act(it.id, idx, 'coverUnit') });
     } else if (isShared && !mineIn) {
       // A split I'm not in
       A.push({ icon: 'plus', label: "I'm in", sub: `Split it ${u.claims.length + 1} ways`, onClick: () => act(it.id, idx, 'join') });
@@ -474,6 +494,7 @@ export default function ClaimItems() {
                 me={myName}
                 onUnit={(idx, v) => act(it.id, idx, v)}
                 onMenu={(idx) => setMenu({ id: it.id, idx })}
+                currency={state.currency || 'USD'}
               />
             );
           })}
