@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from '../context/SessionContext';
 import { socket, BACKEND_URL } from '../context/socket';
 import { QRCodeSVG } from 'qrcode.react';
@@ -37,6 +37,20 @@ export default function QROverlay() {
     buildUrl();
   }, [state.sessionId]);
 
+  // Ref so the 'open-qr' event listener always calls the latest handleOpen
+  // without needing to re-register on every render.
+  const handleOpenRef = useRef(null);
+
+  // Register 'open-qr' listener once — TipAndShare dispatches this event to
+  // trigger the overlay without needing a prop-drilled callback.
+  useEffect(() => {
+    function onOpenQR() {
+      if (handleOpenRef.current) handleOpenRef.current();
+    }
+    window.addEventListener('open-qr', onOpenQR);
+    return () => window.removeEventListener('open-qr', onOpenQR);
+  }, []);
+
   // Only render for hosts with an active session
   if (!state.sessionId || !state.currentUser?.isHost) return null;
 
@@ -64,6 +78,10 @@ export default function QROverlay() {
     });
     setOpen(true);
   }
+
+  // Keep the ref pointing at the latest handleOpen (so the event listener always
+  // calls it even after state updates).
+  handleOpenRef.current = handleOpen;
 
   async function handleShare() {
     if (!sessionUrl) return;

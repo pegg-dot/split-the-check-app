@@ -1,19 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession, formatPrice as fmtPrice, currencySymbol, round2 } from '../context/SessionContext';
+import { Button } from '../components/ui/Button';
 import { socket } from '../context/socket';
 import { recordSplit } from '../lib/history';
 
-const TIP_PRESETS = [15, 18, 20];
+const TIP_PRESETS = [0, 15, 18, 20];
 
 export default function TipAndShare() {
   const navigate = useNavigate();
   const { state, dispatch } = useSession();
-  const [customTip, setCustomTip] = useState('');
   const [isCustom, setIsCustom] = useState(false);
-  const [dollarInput, setDollarInput] = useState(state.tipDollar > 0 ? state.tipDollar.toFixed(2) : '');
-
-  console.log('[TipAndShare] Mounted. state:', { subtotal: state.subtotal, tax: state.tax, tipPercent: state.tipPercent, tipIncluded: state.tipIncluded, tipAmount: state.tipAmount, sessionId: state.sessionId, items: state.items?.length });
+  const [customTip, setCustomTip] = useState('');
+  const [dollarInput, setDollarInput] = useState(
+    state.tipDollar > 0 ? state.tipDollar.toFixed(2) : ''
+  );
 
   const tipMode = state.tipMode || 'percent';
 
@@ -37,12 +38,13 @@ export default function TipAndShare() {
     Math.max(0, state.discount || 0)
   ));
 
-  console.log('[TipAndShare] Calculated:', { includedGratuity, additionalTip, grandTotal });
+  const currency = state.currency || 'USD';
+  const formatPrice = (p) => fmtPrice(p, currency);
+  const curSym = currencySymbol(currency);
 
   // Generate session ID if not set
   useEffect(() => {
     if (!state.sessionId) {
-      // 10 chars of base36 (~3.6e15 space) — avoids collision/hijack of a live session.
       const id = Math.random().toString(36).substring(2, 12);
       dispatch({ type: 'SET_SESSION_ID', sessionId: id });
     }
@@ -50,15 +52,22 @@ export default function TipAndShare() {
 
   const sessionId = state.sessionId;
 
-  // Auto-create session on mount so QR overlay works immediately
+  // Auto-create / update session on server whenever tip settings change.
+  // socket is null in SSR/test (guarded in socket.js), so we check before use.
   useEffect(() => {
     if (!sessionId) return;
+    if (!socket) return;
     if (!socket.connected) {
       socket.connect();
     }
-    // Record to on-device history so the host can find it later from Home.
-    recordSplit({ sessionId, hostName: state.hostName, currency: state.currency, total: grandTotal, guests: state.guests.length });
-    // Create/update session on server whenever tip settings change
+    // Record to on-device history
+    recordSplit({
+      sessionId,
+      hostName: state.hostName,
+      currency: state.currency,
+      total: grandTotal,
+      guests: state.guests.length,
+    });
     socket.emit('create-session', {
       sessionId,
       hostName: state.hostName,
@@ -78,8 +87,10 @@ export default function TipAndShare() {
       exchangeRate: state.exchangeRate,
       receiptTotal: state.receiptTotal,
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, state.tipPercent, state.tipMode, state.tipDollar, state.tipIncluded]);
 
+  // ── tip helpers ──────────────────────────────────────────────────────
   function selectTip(percent) {
     setIsCustom(false);
     dispatch({ type: 'SET_TIP_PERCENT', percent });
@@ -103,231 +114,289 @@ export default function TipAndShare() {
     dispatch({ type: 'SET_TIP_MODE', mode });
   }
 
-  function toggleTipIncluded() {
-    const newValue = !state.tipIncluded;
-    dispatch({ type: 'SET_TIP_INCLUDED', tipIncluded: newValue, tipAmount: state.tipAmount });
+  // ── QR open ──────────────────────────────────────────────────────────
+  function handleShowQR() {
+    // Ensure the session is created/refreshed before the overlay opens.
+    if (socket && socket.connected) {
+      socket.emit('create-session', {
+        sessionId,
+        hostName: state.hostName,
+        venmoHandle: state.venmoHandle,
+        hostDisplayName: state.hostDisplayName,
+        items: state.items,
+        subtotal: state.subtotal,
+        tax: state.tax,
+        tipPercent: state.tipPercent,
+        tipMode: state.tipMode,
+        tipDollar: state.tipDollar,
+        tipIncluded: state.tipIncluded,
+        tipAmount: state.tipAmount,
+        adminFee: state.adminFee,
+        discount: state.discount,
+        currency: state.currency,
+        exchangeRate: state.exchangeRate,
+        receiptTotal: state.receiptTotal,
+      });
+    }
+    // Signal the globally-mounted QROverlay (App.jsx) to open.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('open-qr'));
+    }
   }
 
-  const formatPrice = (p) => fmtPrice(p, state.currency || 'USD');
-  const curSym = currencySymbol(state.currency || 'USD');
+  // ── tip label for totals section ─────────────────────────────────────
+  const tipLabel = state.tipIncluded
+    ? tipMode === 'dollar' ? 'Additional tip (flat)' : `Additional tip (${state.tipPercent}%)`
+    : tipMode === 'dollar' ? 'Tip (flat)' : `Tip · ${state.tipPercent}%`;
 
   return (
-    <div className="page">
-      <button className="btn btn-ghost btn-sm" onClick={() => navigate('/review')} style={{ alignSelf: 'flex-start', marginBottom: '8px', padding: '6px 0' }}>← Back to Review</button>
-      <div className="page-header">
-        <h1>Tip & Share</h1>
-        <p>Set the tip for the table</p>
+    <div className="pg">
+      {/* Back */}
+      <button className="back" onClick={() => navigate('/review')}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M19 12H5M12 5l-7 7 7 7" />
+        </svg>
+        Back
+      </button>
+
+      {/* Header */}
+      <div className="claim-head">
+        <div className="h1">
+          Set the <span className="serif-i" style={{ fontSize: '1.9rem' }}>tip</span>
+        </div>
+        <p className="lead" style={{ marginTop: 4 }}>
+          Here&rsquo;s everything the AI pulled off your receipt.
+        </p>
       </div>
 
-      {/* Gratuity-detected banner */}
-      {state.tipIncluded && state.tipAmount > 0 && (
-        <div style={{
-          padding: '14px 16px',
-          borderRadius: 'var(--radius-lg)',
-          background: '#e3f2fd',
-          border: '1.5px solid #90caf9',
-          marginBottom: '16px',
-        }}>
-          <p style={{ fontWeight: 700, fontSize: '0.938rem', color: '#1565c0' }}>
-            🔍 A gratuity of {formatPrice(state.tipAmount)} was detected on your receipt
-          </p>
-          <p style={{ fontSize: '0.813rem', color: '#1976d2', marginTop: '4px' }}>
-            It's already included in the total. Would you like to add an additional tip?
-          </p>
-        </div>
-      )}
+      {/* ── Scanned itemization card ─────────────────────────────────── */}
+      <div className="sum-card" style={{ boxShadow: 'var(--sh-soft)', border: '1.5px solid var(--line)' }}>
+        {/* Item rows */}
+        {state.items && state.items.map((item) => {
+          const qty = item.units?.length > 1 ? item.units.length
+            : (item.quantity > 1 ? item.quantity : null);
+          return (
+            <div className="srow scan-row" key={item.id}>
+              <span className="nm">
+                {item.name}
+                {qty && <span className="scan-q">×{qty}</span>}
+              </span>
+              <span className="mono">{formatPrice(item.price)}</span>
+            </div>
+          );
+        })}
 
-      {/* Bill summary */}
-      <div className="card mb-24">
-        <div className="total-row">
+        {/* Tear-line + subtotals */}
+        <div
+          className="srow sub"
+          style={{ borderTop: '1px dashed var(--line)', marginTop: 4, paddingTop: 12 }}
+        >
           <span>Subtotal</span>
-          <span className="fw-700">{formatPrice(state.subtotal)}</span>
+          <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(state.subtotal)}</span>
         </div>
-        {(state.adminFee > 0) && (
-          <div className="total-row">
-            <span>Admin Fee</span>
-            <span className="fw-700">{formatPrice(state.adminFee)}</span>
-          </div>
-        )}
-        <div className="total-row">
+
+        <div className="srow sub">
           <span>Tax</span>
-          <span className="fw-700">{formatPrice(state.tax)}</span>
+          <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(state.tax)}</span>
         </div>
+
+        {state.adminFee > 0 && (
+          <div className="srow sub">
+            <span>Admin Fee</span>
+            <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(state.adminFee)}</span>
+          </div>
+        )}
+
         {state.discount > 0 && (
-          <div className="total-row">
+          <div className="srow sub">
             <span>Discount</span>
-            <span className="fw-700" style={{ color: 'var(--color-success, #2e7d32)' }}>−{formatPrice(state.discount)}</span>
-          </div>
-        )}
-        {includedGratuity > 0 && (
-          <div className="total-row">
-            <span>Gratuity (included)</span>
-            <span className="fw-700">{formatPrice(includedGratuity)}</span>
-          </div>
-        )}
-        {additionalTip > 0 && (
-          <div className="total-row">
-            <span>
-              {state.tipIncluded
-                ? tipMode === 'dollar' ? 'Additional tip (flat)' : `Additional tip (${state.tipPercent}%)`
-                : tipMode === 'dollar' ? 'Tip (flat)' : `Tip (${state.tipPercent}%)`
-              }
+            <span className="mono" style={{ fontWeight: 700, color: 'var(--sage)' }}>
+              −{formatPrice(state.discount)}
             </span>
-            <span className="fw-700">{formatPrice(additionalTip)}</span>
           </div>
         )}
-        <div className="total-row total-row-final">
-          <span>Total</span>
-          <span>{formatPrice(grandTotal)}</span>
+
+        {includedGratuity > 0 && (
+          <div className="srow sub">
+            <span>Gratuity (included)</span>
+            <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(includedGratuity)}</span>
+          </div>
+        )}
+
+        {additionalTip > 0 && (
+          <div className="srow sub">
+            <span>{tipLabel}</span>
+            <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(additionalTip)}</span>
+          </div>
+        )}
+
+        {/* Heavy total row */}
+        <div className="srow tot">
+          <span className="nm">Total</span>
+          <span className="pr mono">{formatPrice(grandTotal)}</span>
         </div>
       </div>
 
-      {/* Tip selector — always shown; if gratuity detected, framed as "additional tip" */}
-      {(
-        <>
-          {/* Mode toggle: % vs $ */}
-          <div style={{
-            display: 'flex',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-            border: '1.5px solid var(--color-border)',
-            marginBottom: '16px',
-          }}>
-            <button
-              onClick={() => setTipMode('percent')}
-              style={{
-                flex: 1,
-                padding: '10px',
-                border: 'none',
-                background: tipMode === 'percent' ? 'var(--color-accent)' : 'transparent',
-                color: tipMode === 'percent' ? '#fff' : 'var(--color-text)',
-                fontWeight: 700,
-                fontSize: '0.938rem',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              Percentage %
-            </button>
-            <button
-              onClick={() => setTipMode('dollar')}
-              style={{
-                flex: 1,
-                padding: '10px',
-                border: 'none',
-                borderLeft: '1.5px solid var(--color-border)',
-                background: tipMode === 'dollar' ? 'var(--color-accent)' : 'transparent',
-                color: tipMode === 'dollar' ? '#fff' : 'var(--color-text)',
-                fontWeight: 700,
-                fontSize: '0.938rem',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              Flat {curSym}
-            </button>
-          </div>
+      {/* Caption */}
+      <p className="cap" style={{ margin: '16px 0 9px' }}>
+        Tip is on the {formatPrice(state.subtotal)} subtotal (pre-tax).
+      </p>
 
-          <p className="text-sm text-muted mb-12">
-            Based on {formatPrice(state.subtotal)} subtotal (pre-tax)
-          </p>
+      {/* ── Tip selector: 4 segments ──────────────────────────────────── */}
+      <div className="tipsel">
+        {TIP_PRESETS.map((p) => (
+          <button
+            key={p}
+            className={`tip${!isCustom && state.tipPercent === p && tipMode === 'percent' ? ' on' : ''}`}
+            onClick={() => { if (tipMode !== 'percent') setTipMode('percent'); selectTip(p); }}
+          >
+            {p === 0 ? 'No tip' : `${p}%`}
+            {p > 0 && (
+              <span className="s">{formatPrice(state.subtotal * (p / 100))}</span>
+            )}
+          </button>
+        ))}
+      </div>
 
-          {tipMode === 'percent' && (
-            <>
-              <div className="tip-options mb-16">
-                <button
-                  className={`tip-btn ${!isCustom && state.tipPercent === 0 ? 'active' : ''}`}
-                  onClick={() => selectTip(0)}
-                >
-                  <span>No tip</span>
-                </button>
-                {TIP_PRESETS.map((pct) => (
-                  <button
-                    key={pct}
-                    className={`tip-btn ${!isCustom && state.tipPercent === pct ? 'active' : ''}`}
-                    onClick={() => selectTip(pct)}
-                  >
-                    <span>{pct}%</span>
-                    <span style={{ display: 'block', fontSize: '0.688rem', fontWeight: 400, opacity: 0.7, marginTop: '2px' }}>
-                      {formatPrice(state.subtotal * (pct / 100))}
-                    </span>
-                  </button>
-                ))}
-                <button
-                  className={`tip-btn ${isCustom ? 'active' : ''}`}
-                  onClick={() => setIsCustom(true)}
-                >
-                  Custom
-                </button>
-              </div>
+      {/* Mode toggle: % vs $ — kept accessible */}
+      <div className="mode-toggle" style={{ marginTop: 14 }}>
+        <button
+          className={tipMode === 'percent' ? 'on' : ''}
+          onClick={() => { setIsCustom(false); setTipMode('percent'); }}
+        >
+          % Percentage
+        </button>
+        <button
+          className={tipMode === 'dollar' ? 'on' : ''}
+          onClick={() => setTipMode('dollar')}
+        >
+          {curSym} Flat amount
+        </button>
+      </div>
 
-              {isCustom && (
-                <div className="input-group">
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      className="input"
-                      type="number"
-                      step="1"
-                      min="0"
-                      value={customTip}
-                      onChange={(e) => handleCustomTip(e.target.value)}
-                      onBlur={() => { const v = parseFloat(customTip); if (isNaN(v) || v < 0) { setCustomTip('0'); dispatch({ type: 'SET_TIP_PERCENT', percent: 0 }); } }}
-                      placeholder="Enter tip %"
-                      autoFocus
-                    />
-                    <span style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', fontWeight: 600 }}>%</span>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {tipMode === 'dollar' && (
-            <div className="input-group">
-              <label className="input-label">Tip amount</label>
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', fontWeight: 600 }}>{curSym}</span>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={dollarInput}
-                  onChange={(e) => handleDollarTip(e.target.value)}
-                  onBlur={() => { const v = parseFloat(dollarInput); if (isNaN(v) || v < 0) { setDollarInput('0.00'); dispatch({ type: 'SET_TIP_DOLLAR', amount: 0 }); } }}
-                  placeholder="0.00"
-                  style={{ paddingLeft: '32px' }}
-                  autoFocus
-                />
-              </div>
-              {state.subtotal > 0 && additionalTip > 0 && (
-                <p className="text-sm text-muted mt-8">
-                  Tip: {((additionalTip / state.subtotal) * 100).toFixed(1)}%
-                </p>
-              )}
+      {/* Custom % input */}
+      {tipMode === 'percent' && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            className={`tip${isCustom ? ' on' : ''}`}
+            style={{ width: '100%' }}
+            onClick={() => setIsCustom(true)}
+          >
+            Custom %
+          </button>
+          {isCustom && (
+            <div style={{ position: 'relative', marginTop: 10 }}>
+              <input
+                style={{
+                  width: '100%',
+                  fontFamily: 'var(--font-ui)',
+                  fontSize: '1rem',
+                  padding: '14px 40px 14px 16px',
+                  border: '1.5px solid var(--clay)',
+                  borderRadius: 'var(--r-md)',
+                  background: 'var(--panel)',
+                  color: 'var(--ink)',
+                  outline: 'none',
+                  boxShadow: '0 0 0 3px var(--clay-soft)',
+                }}
+                type="number"
+                step="1"
+                min="0"
+                value={customTip}
+                onChange={(e) => handleCustomTip(e.target.value)}
+                onBlur={() => {
+                  const v = parseFloat(customTip);
+                  if (isNaN(v) || v < 0) {
+                    setCustomTip('0');
+                    dispatch({ type: 'SET_TIP_PERCENT', percent: 0 });
+                  }
+                }}
+                placeholder="Enter tip %"
+                autoFocus
+              />
+              <span style={{
+                position: 'absolute', right: 16, top: '50%',
+                transform: 'translateY(-50%)', color: 'var(--ink-3)', fontWeight: 600,
+              }}>%</span>
             </div>
           )}
-
-        </>
+        </div>
       )}
 
-      {state.tipIncluded && (
-        <p className="text-sm text-muted text-center">
-          {state.tipPercent === 0 && !state.tipDollar
-            ? 'No additional tip will be added.'
-            : 'Additional tip will be added on top of the detected gratuity.'}
-        </p>
+      {/* Flat dollar input */}
+      {tipMode === 'dollar' && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ position: 'relative' }}>
+            <span style={{
+              position: 'absolute', left: 16, top: '50%',
+              transform: 'translateY(-50%)', color: 'var(--ink-3)', fontWeight: 600,
+            }}>{curSym}</span>
+            <input
+              style={{
+                width: '100%',
+                fontFamily: 'var(--font-ui)',
+                fontSize: '1rem',
+                padding: '14px 16px 14px 32px',
+                border: '1.5px solid var(--clay)',
+                borderRadius: 'var(--r-md)',
+                background: 'var(--panel)',
+                color: 'var(--ink)',
+                outline: 'none',
+                boxShadow: '0 0 0 3px var(--clay-soft)',
+              }}
+              type="number"
+              step="0.01"
+              min="0"
+              value={dollarInput}
+              onChange={(e) => handleDollarTip(e.target.value)}
+              onBlur={() => {
+                const v = parseFloat(dollarInput);
+                if (isNaN(v) || v < 0) {
+                  setDollarInput('0.00');
+                  dispatch({ type: 'SET_TIP_DOLLAR', amount: 0 });
+                }
+              }}
+              placeholder="0.00"
+              autoFocus
+            />
+          </div>
+          {state.subtotal > 0 && additionalTip > 0 && (
+            <p className="cap" style={{ marginTop: 8 }}>
+              ≈ {((additionalTip / state.subtotal) * 100).toFixed(1)}% of subtotal
+            </p>
+          )}
+        </div>
       )}
 
-      <div className="spacer" />
+      {/* Gratuity notice */}
+      {state.tipIncluded && state.tipAmount > 0 && (
+        <div style={{
+          marginTop: 14,
+          padding: '12px 14px',
+          borderRadius: 'var(--r-md)',
+          background: 'var(--clay-soft)',
+          border: '1.5px solid var(--clay-edge)',
+          fontSize: '.86rem',
+          fontWeight: 500,
+          color: 'var(--clay-deep)',
+        }}>
+          A gratuity of {formatPrice(state.tipAmount)} was detected on your receipt and is already included.
+          {additionalTip > 0
+            ? ' An additional tip will be added on top.'
+            : ' No additional tip will be added.'}
+        </div>
+      )}
 
-      <div className="mt-24 flex-col gap-8">
-        <button className="btn btn-primary" onClick={() => navigate(`/claim/${sessionId}`)}>
-          Claim My Items
-        </button>
-        <button className="btn btn-secondary" onClick={() => navigate(`/host/${sessionId}`)}>
-          View Dashboard
-        </button>
+      <div style={{ flex: 1, minHeight: 16 }} />
+
+      {/* ── CTAs ─────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Button icon="qr-code" onClick={handleShowQR}>
+          Show the QR code
+        </Button>
+        <Button variant="soft" icon="users" onClick={() => navigate(`/host/${sessionId}`)}>
+          Track who&rsquo;s paid
+        </Button>
       </div>
     </div>
   );
