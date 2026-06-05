@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSession, currencySymbol } from '../context/SessionContext';
 import { BACKEND_URL } from '../context/socket';
 import { getHistory } from '../lib/history';
+import { Icon, Button } from '../components/ui';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -12,7 +13,9 @@ export default function Home() {
   const [currency, setCurrency] = useState('USD');
   const [verifying, setVerifying] = useState(false);
   const [venmoStatus, setVenmoStatus] = useState(null); // { valid, displayName, note, error }
-  const [history] = useState(() => getHistory());
+  const [history] = useState(() =>
+    typeof localStorage !== 'undefined' ? getHistory() : []
+  );
 
   // A split restored from localStorage (refresh safety net) → offer to resume.
   const hasInProgress = (state.items && state.items.length > 0) || !!state.sessionId;
@@ -81,152 +84,206 @@ export default function Home() {
   }
 
   return (
-    <div className="page" style={{ justifyContent: 'center' }}>
-      <div className="text-center mb-24">
-        <div style={{ fontSize: '3rem', marginBottom: '8px' }}>🧾</div>
-        <h1>Split the Check</h1>
-        <p className="mt-8">Scan. Claim. Pay. Done.</p>
-      </div>
+    <div className="app-shell">
+      <div className="app-body pg">
 
-      {/* Resume an in-progress split restored after a refresh */}
-      {hasInProgress && (
-        <div className="card mb-16" style={{ borderColor: 'var(--color-accent)', background: 'var(--color-accent-light)' }}>
-          <p className="text-sm" style={{ fontWeight: 700, marginBottom: '8px' }}>
-            You have a split in progress{state.items?.length ? ` (${state.items.length} items)` : ''}
-          </p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={resumeInProgress}>Resume</button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={startNew}>Start new</button>
-          </div>
-        </div>
-      )}
-
-      <form onSubmit={handleStart} className="flex-col gap-12">
-        <div className="input-group">
-          <label className="input-label">Your name</label>
-          <input
-            className="input"
-            type="text"
-            placeholder="e.g. Sarah"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoComplete="given-name"
-          />
-        </div>
-
-        <div className="input-group">
-          <label className="input-label">Venmo username, phone, or email</label>
-          <input
-            className="input"
-            type="text"
-            placeholder="e.g. @sarah-jones or (555) 123-4567"
-            value={venmo}
-            onChange={handleVenmoChange}
-            onBlur={handleVenmoBlur}
-            style={{
-              borderColor: venmoStatus
-                ? venmoStatus.valid
-                  ? 'var(--color-success)'
-                  : 'var(--color-accent)'
-                : undefined,
-            }}
-          />
-
-          {/* Verification status */}
-          {verifying && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-              <div className="spinner" style={{ width: '16px', height: '16px', borderWidth: '2px' }} />
-              <span className="text-sm text-muted">Checking Venmo...</span>
-            </div>
-          )}
-
-          {venmoStatus && !verifying && venmoStatus.valid && (
-            <div style={{ marginTop: '8px' }}>
-              {venmoStatus.displayName ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ color: 'var(--color-success)', fontWeight: 700, fontSize: '1rem' }}>✓</span>
-                  <span className="text-sm" style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-                    {venmoStatus.displayName}
-                  </span>
-                </div>
-              ) : venmoStatus.note ? (
-                <p className="text-sm" style={{ color: 'var(--color-warning)', fontWeight: 500 }}>
-                  ⚠ {venmoStatus.note}
-                </p>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ color: 'var(--color-success)', fontWeight: 700, fontSize: '1rem' }}>✓</span>
-                  <span className="text-sm" style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-                    Venmo account found
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {venmoStatus && !verifying && !venmoStatus.valid && (
-            <div style={{ marginTop: '8px' }}>
-              <p className="text-sm" style={{ color: 'var(--color-accent)', fontWeight: 500 }}>
-                {venmoStatus.error || 'Venmo account not found'}
-              </p>
-            </div>
-          )}
-
-          {!venmoStatus && !verifying && (
-            <p className="text-sm text-muted mt-8">
-              This is where your friends will send payment
-            </p>
-          )}
-        </div>
-
-        <div className="input-group">
-          <label className="input-label">Receipt currency</label>
-          <select
-            className="input"
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            style={{ appearance: 'auto' }}
-          >
-            {CURRENCIES.map(c => (
-              <option key={c.code} value={c.code}>{c.label}</option>
-            ))}
-          </select>
-          <p className="text-sm text-muted mt-8">
-            The AI will auto-detect this from your receipt too
-          </p>
-        </div>
-
-        <button type="submit" className="btn btn-primary mt-16" disabled={!canStart || verifying}>
-          {verifying ? 'Verifying...' : 'Start Splitting'}
+        {/* Back button */}
+        <button className="back" onClick={() => navigate('/')}>
+          <Icon name="arrow-left" size={16} stroke={2.2} /> Back
         </button>
-      </form>
 
-      {/* Recent splits hosted on this device */}
-      {history.length > 0 && (
-        <div className="mt-24">
-          <h3 style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '8px' }}>
-            Recent splits
-          </h3>
-          <div className="card" style={{ padding: '4px 0' }}>
-            {history.map((h) => (
-              <div
-                key={h.id}
-                className="item-row"
-                style={{ cursor: 'pointer' }}
-                onClick={() => navigate(`/host/${h.id}`)}
+        {/* Resume in-progress banner */}
+        {hasInProgress && (
+          <div className="field" style={{
+            background: 'var(--clay-soft)',
+            border: '1.5px solid var(--clay-edge)',
+            borderRadius: 'var(--r-md)',
+            padding: '14px 16px',
+            marginBottom: '16px',
+          }}>
+            <p style={{ fontWeight: 700, marginBottom: '10px', fontSize: '0.93rem' }}>
+              You have a split in progress{state.items?.length ? ` (${state.items.length} items)` : ''}
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-clay"
+                style={{ flex: 1, padding: '10px 14px', fontSize: '0.9rem' }}
+                onClick={resumeInProgress}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span className="item-name">{h.hostName || 'Split'}</span>
-                  <span className="text-sm text-muted" style={{ display: 'block' }}>
-                    {h.guests} {h.guests === 1 ? 'guest' : 'guests'}
+                Resume
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: '10px 14px', fontSize: '0.9rem', width: 'auto' }}
+                onClick={startNew}
+              >
+                Start new
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Heading */}
+        <div className="claim-head">
+          <div className="h1">
+            First, <span className="serif-i" style={{ fontSize: '2rem' }}>you</span>.
+          </div>
+          <p className="lead" style={{ marginTop: 4 }}>So friends know who to pay.</p>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleStart} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+
+          {/* Name field */}
+          <div className="field">
+            <label>Your name</label>
+            <input
+              type="text"
+              placeholder="e.g. Sarah"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoComplete="given-name"
+            />
+          </div>
+
+          {/* Venmo field */}
+          <div className="field">
+            <label>Venmo username, phone, or email</label>
+            <input
+              className={venmoStatus?.valid ? 'ok' : ''}
+              type="text"
+              placeholder="e.g. @sarah-jones or (555) 123-4567"
+              value={venmo}
+              onChange={handleVenmoChange}
+              onBlur={handleVenmoBlur}
+              style={
+                venmoStatus && !venmoStatus.valid
+                  ? { borderColor: 'var(--clay)' }
+                  : undefined
+              }
+            />
+
+            {/* Verifying spinner */}
+            {verifying && (
+              <div className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{
+                  width: 13, height: 13, border: '2px solid var(--line)', borderTopColor: 'var(--clay)',
+                  borderRadius: '50%', animation: 'spin .7s linear infinite', flexShrink: 0,
+                }} />
+                Verifying…
+              </div>
+            )}
+
+            {/* Valid with displayName */}
+            {venmoStatus && !verifying && venmoStatus.valid && venmoStatus.displayName && (
+              <div className="hint ok">
+                <Icon name="check" size={14} stroke={2.6} />
+                {venmoStatus.displayName}
+              </div>
+            )}
+
+            {/* Valid but just a note (could-not-verify fallback) */}
+            {venmoStatus && !verifying && venmoStatus.valid && !venmoStatus.displayName && venmoStatus.note && (
+              <div className="hint" style={{ color: 'var(--gold)' }}>
+                ⚠ {venmoStatus.note}
+              </div>
+            )}
+
+            {/* Valid, no displayName, no note */}
+            {venmoStatus && !verifying && venmoStatus.valid && !venmoStatus.displayName && !venmoStatus.note && (
+              <div className="hint ok">
+                <Icon name="check" size={14} stroke={2.6} />
+                Venmo account found
+              </div>
+            )}
+
+            {/* Not valid */}
+            {venmoStatus && !verifying && !venmoStatus.valid && (
+              <div className="hint" style={{ color: 'var(--clay-deep)' }}>
+                {venmoStatus.error || 'Venmo account not found'}
+              </div>
+            )}
+
+            {/* Idle hint */}
+            {!venmoStatus && !verifying && (
+              <div className="hint">This is where your friends will send payment</div>
+            )}
+          </div>
+
+          {/* Currency field */}
+          <div className="field">
+            <label>Receipt currency</label>
+            <div className="sel">
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+              >
+                {CURRENCIES.map(c => (
+                  <option key={c.code} value={c.code}>{c.label}</option>
+                ))}
+              </select>
+              <span className="lic">
+                <Icon name="chevron-down" size={18} color="var(--ink-3)" />
+              </span>
+            </div>
+            <div className="hint">The AI auto-detects this from your receipt too.</div>
+          </div>
+
+          {/* Spacer pushes CTA to bottom */}
+          <div style={{ flex: 1 }} />
+
+          {/* Sticky CTA */}
+          <div style={{
+            position: 'sticky', bottom: 0,
+            padding: '12px 0 calc(8px + env(safe-area-inset-bottom, 0px))',
+            background: 'var(--bg)',
+          }}>
+            <Button
+              icon="camera"
+              type="submit"
+              disabled={!canStart || verifying}
+            >
+              Snap the receipt
+            </Button>
+          </div>
+        </form>
+
+        {/* Recent splits hosted on this device */}
+        {history.length > 0 && (
+          <div style={{ marginTop: 24 }}>
+            <p className="cap" style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+              Recent splits
+            </p>
+            <div style={{ background: 'var(--panel)', border: '1.5px solid var(--line)', borderRadius: 'var(--r-lg)', padding: '4px 0', boxShadow: 'var(--sh-soft)' }}>
+              {history.map((h) => (
+                <div
+                  key={h.id}
+                  onClick={() => navigate(`/host/${h.id}`)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '12px 18px', cursor: 'pointer', borderBottom: '1px solid var(--line-2)',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {h.hostName || 'Split'}
+                    </span>
+                    <span className="cap">
+                      {h.guests} {h.guests === 1 ? 'guest' : 'guests'}
+                    </span>
+                  </div>
+                  <span className="mono" style={{ fontWeight: 700, flexShrink: 0, marginLeft: 12 }}>
+                    {currencySymbol(h.currency)}{(Number(h.total) || 0).toFixed(2)}
                   </span>
                 </div>
-                <span className="item-price">{currencySymbol(h.currency)}{(Number(h.total) || 0).toFixed(2)}</span>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+      </div>
     </div>
   );
 }
