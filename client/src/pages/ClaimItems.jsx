@@ -1,35 +1,359 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useSession, calculatePersonTotal, formatPrice as fmtPrice } from '../context/SessionContext';
-import { socket, BACKEND_URL } from '../context/socket';
+import { useSession, calculatePersonTotal, formatPrice as fmtPrice, unitPrice } from '../context/SessionContext';
+import { Avatar, AvatarStack, toneFor, Icon, Button, SketchCheck, SheetPortal } from '../components/ui/index.js';
+
+// ── Pure helpers (no socket, no context — safe to unit-test in isolation) ───
+
+/** @pure */
+function UnitRow({ item, u, idx, up, me, onUnit, onMenu }) {
+  const mineIn = u.claims.includes(me);
+  const others = u.claims.filter((n) => n !== me);
+  const isShared = !!u.shared;
+  const open = u.claims.length === 0;
+  const heldByOther = !isShared && others.length > 0 && !mineIn;
+  const sharedNotIn = isShared && !mineIn;
+  const sharedIn = isShared && mineIn;
+  const soloMine = !isShared && mineIn;
+  const each = u.claims.length ? up / u.claims.length : up;
+
+  let tgt;
+  if (mineIn) {
+    tgt = <span className="utgt" style={{ background: 'var(--clay)', borderColor: 'var(--clay)' }}><SketchCheck size={13} /></span>;
+  } else if (others.length) {
+    tgt = <span className="utgt-av">{u.claims.slice(0, 2).map((n) => <Avatar key={n} name={n} tone={toneFor(n)} size={22} />)}</span>;
+  } else {
+    tgt = <span className="utgt" />;
+  }
+
+  const canTap = open || soloMine || sharedNotIn;
+  function tap() {
+    if (open) onUnit(idx, 'grab');
+    else if (soloMine) onUnit(idx, 'release');
+    else if (sharedNotIn) onUnit(idx, 'join');
+  }
+
+  let label;
+  if (open) label = <span className="muted">Tap to grab · ${up.toFixed(2)}</span>;
+  else if (soloMine) label = <span className="u-mine">Yours · ${up.toFixed(2)}</span>;
+  else if (heldByOther) label = <span>{others[0]}'s · ${up.toFixed(2)}</span>;
+  else if (sharedNotIn) label = <span>${(up / (u.claims.length + 1)).toFixed(2)} ea if you join</span>;
+  else label = <span className="u-mine">You + {others.length} · ${each.toFixed(2)} ea</span>;
+
+  return (
+    <div
+      className={`urow ${mineIn ? 'mine' : ''} ${heldByOther ? 'held' : ''}`}
+      style={{ cursor: canTap ? 'pointer' : 'default' }}
+      onClick={() => { if (canTap) tap(); }}
+    >
+      {tgt}
+      <span className="urow-label">{label}</span>
+      <span className="urow-act">
+        {sharedNotIn && (
+          <button
+            className="chip-btn chip-join sm"
+            onClick={(e) => { e.stopPropagation(); onUnit(idx, 'join'); }}
+          >
+            <Icon name="plus" size={13} stroke={2.6} /> I’m in
+          </button>
+        )}
+        <button
+          className="u-menu"
+          onClick={(e) => { e.stopPropagation(); onMenu(idx); }}
+          title="Options"
+        >
+          <Icon name="ellipsis" size={18} stroke={2.2} />
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Pure, exported card component — safe to render in isolation (no useSession,
+ * no socket calls). All data comes in via props.
+ */
+export function ItemCard({ item, me, onUnit, onMenu }) {
+  const multi = item.units.length > 1;
+  const up = unitPrice(item);
+  const anyDispute = item.units.some((u) => u.dispute);
+
+  if (multi) {
+    const mineUnits = item.units.filter((u) => u.claims.includes(me)).length;
+    const openUnits = item.units.filter((u) => u.claims.length === 0).length;
+    return (
+      <div className="icard multi">
+        <div className="icard-top">
+          <span
+            className={`tgt ${mineUnits ? '' : 'empty-tgt'}`}
+            style={mineUnits ? { background: 'var(--clay)', borderColor: 'var(--clay)' } : {}}
+          >
+            {mineUnits
+              ? <span className="tgt-n">{mineUnits}</span>
+              : <Icon name="layers" size={15} stroke={2} color="var(--ink-3)" />}
+          </span>
+          <span className="icard-name">
+            {item.name}<span className="icard-qty">×{item.units.length}</span>
+          </span>
+          <span className="icard-price mono">${item.price.toFixed(2)}</span>
+        </div>
+        <div className="ulist">
+          {item.units.map((u, i) => (
+            <UnitRow
+              key={i}
+              item={item}
+              u={u}
+              idx={i}
+              up={up}
+              me={me}
+              onUnit={onUnit}
+              onMenu={onMenu}
+            />
+          ))}
+          <div className="ulist-foot">
+            <span className="split-meta">
+              ${up.toFixed(2)} each · {openUnits > 0 ? `${openUnits} still open` : 'all spoken for'}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Single unit ─────────────────────────────────────────────────────
+  const u = item.units[0];
+  const mineIn = u.claims.includes(me);
+  const others = u.claims.filter((n) => n !== me);
+  const isShared = !!u.shared;
+  const disp = u.dispute;
+  const disputeByMe = disp && disp.by === me;
+  const disputeOnMine = disp && mineIn && disp.by !== me;
+  const open = u.claims.length === 0 && !disp;
+  const heldByOther = !isShared && others.length > 0 && !mineIn && !disp;
+  const sharedNotIn = isShared && !mineIn && !disp;
+  const sharedIn = isShared && mineIn && !disp;
+  const soloMine = !isShared && mineIn && !disp;
+  const each = u.claims.length ? item.price / u.claims.length : item.price;
+
+  let target;
+  if (disputeByMe) {
+    target = <span key="d"><Avatar name={others[0] || '?'} tone={toneFor(others[0])} size={30} /></span>;
+  } else if (mineIn) {
+    target = <span key="m" className="tgt" style={{ background: 'var(--clay)', borderColor: 'var(--clay)' }}><SketchCheck size={17} /></span>;
+  } else if (others.length) {
+    target = <span key="o"><Avatar name={others[0]} tone={toneFor(others[0])} size={30} /></span>;
+  } else {
+    target = <span key="e" className="tgt" />;
+  }
+
+  const canTap = open || soloMine || sharedNotIn;
+  function tapCard() {
+    if (open) onUnit(0, 'grab');
+    else if (soloMine) onUnit(0, 'release');
+    else if (sharedNotIn) onUnit(0, 'join');
+  }
+
+  const cardStyle = { cursor: canTap ? 'pointer' : 'default' };
+  if (mineIn && !disp) {
+    cardStyle.background = 'var(--clay-soft)';
+    cardStyle.borderColor = 'var(--clay-edge)';
+  } else if (heldByOther) {
+    cardStyle.background = 'var(--bg-2)';
+  }
+
+  return (
+    <div
+      className={`icard ${mineIn && !disp ? 'mine' : ''} ${heldByOther ? 'held' : ''}`}
+      style={cardStyle}
+      onClick={() => { if (canTap) tapCard(); }}
+    >
+      <div className="icard-top">
+        {target}
+        <span className="icard-name">
+          {item.name}
+          {item.covered && mineIn
+            ? <span className="cover-tag"><Icon name="gift" size={12} stroke={2.2} /> covering</span>
+            : null}
+        </span>
+        <span className="icard-price mono">${item.price.toFixed(2)}</span>
+        {!disp && (
+          <button
+            className="menu-btn"
+            onClick={(e) => { e.stopPropagation(); onMenu(0); }}
+            title="Options"
+          >
+            <Icon name="ellipsis" size={20} stroke={2.2} />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="icard-sub">
+          <span className="split-meta muted">Tap if you ordered this</span>
+        </div>
+      )}
+
+      {soloMine && (
+        <div className="icard-sub">
+          <span className="split-meta">All yours</span>
+        </div>
+      )}
+
+      {heldByOther && (
+        <div className="icard-sub">
+          <span className="split-meta" style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {others[0]} ordered this
+          </span>
+        </div>
+      )}
+
+      {sharedNotIn && (
+        <div className="icard-sub">
+          <span className="split-meta" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <AvatarStack names={u.claims} me={me} size={22} />
+            {' '}${(item.price / (u.claims.length + 1)).toFixed(2)} each if you join
+          </span>
+          <button
+            className="chip-btn chip-join"
+            onClick={(e) => { e.stopPropagation(); onUnit(0, 'join'); }}
+          >
+            <Icon name="plus" size={14} stroke={2.4} /> I’m in
+          </button>
+        </div>
+      )}
+
+      {sharedIn && (
+        <div className="icard-sub">
+          <span className="split-meta">
+            <AvatarStack names={u.claims} me={me} size={22} />
+            {' '}· ${each.toFixed(2)} each{' '}
+            {u.claims.length === 1 ? '· waiting for others to tap in' : `· split ${u.claims.length} ways`}
+          </span>
+        </div>
+      )}
+
+      {disputeByMe && (
+        <div className="ec ec-wait">
+          Asking {others[0] || 'them'} to hand it over…
+          <div className="ec-row">
+            <span />
+            <button className="lk" onClick={(e) => { e.stopPropagation(); onUnit(0, 'cancel'); }}>
+              Never mind
+            </button>
+          </div>
+        </div>
+      )}
+
+      {disputeOnMine && (
+        <div className="ec ec-mine">
+          <strong>{disp.by}</strong> says this one's theirs.
+          <div className="ec-row">
+            <button className="lk" onClick={(e) => { e.stopPropagation(); onUnit(0, 'resolveAccept'); }}>
+              You're right — it's {disp.by}'s
+            </button>
+            <button className="solid" onClick={(e) => { e.stopPropagation(); onUnit(0, 'resolveReject'); }}>
+              No, it's mine
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Route component ─────────────────────────────────────────────────────────
 
 export default function ClaimItems() {
+  // Lazy socket import keeps this module importable in node test env when
+  // only ItemCard is needed (socket.js accesses window at module level).
+  // eslint-disable-next-line no-undef
+  const { socket, BACKEND_URL } = (() => {
+    try {
+      // dynamic require-style inside function — still bundled by Vite but
+      // only executed when ClaimItems() is actually called.
+      return require('../context/socket');
+    } catch {
+      return { socket: null, BACKEND_URL: '' };
+    }
+  })();
+
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const { state, dispatch } = useSession();
 
-  // Modals for regular items
-  const [splitModalItem, setSplitModalItem]   = useState(null);
-  const [splitCount, setSplitCount]           = useState(2);
-  const [shareModalItem, setShareModalItem]   = useState(null);
-  const [shareCount, setShareCount]           = useState(2);
+  const myName = state.currentUser?.name;
+  const host = state.hostName;
+  const [toastMsg, setToastMsg] = useState(null);
+  const [menu, setMenu] = useState(null);     // { id, idx } whose options sheet is open
+  const [confirm, setConfirm] = useState(false); // unclaimed-items guard sheet
 
-  // Modal for quantity items
-  const [unitsModalItem, setUnitsModalItem]   = useState(null);
-  const [unitsCount, setUnitsCount]           = useState(1);
+  const fmt = (p) => fmtPrice(p, state.currency || 'USD');
 
-  const myName     = state.currentUser?.name;
-  const formatPrice = (p) => fmtPrice(p, state.currency || 'USD');
+  // Flash feedback
+  function flash(m) {
+    setToastMsg(m);
+    clearTimeout(window.__stc_ot);
+    window.__stc_ot = setTimeout(() => setToastMsg(null), 1800);
+  }
 
-  // ── Socket setup ──────────────────────────────────────────────────
+  // ── Verb → socket event dispatcher ──────────────────────────────────
+  function act(itemId, unitIndex, verb) {
+    if (!socket) return;
+    if (verb === 'coverItem') {
+      socket.emit('cover-item', { sessionId, itemId });
+      return;
+    }
+    if (verb === 'resolveAccept') {
+      socket.emit('resolve-dispute', { sessionId, itemId, unitIndex, accept: true });
+      return;
+    }
+    if (verb === 'resolveReject') {
+      socket.emit('resolve-dispute', { sessionId, itemId, unitIndex, accept: false });
+      return;
+    }
+    if (verb === 'clear') {
+      const it = state.items.find((i) => String(i.id) === String(itemId));
+      (it?.units || []).forEach((u, i) => {
+        if (u.claims.includes(myName)) socket.emit('release-unit', { sessionId, itemId, unitIndex: i });
+      });
+      return;
+    }
+    const EV = {
+      grab: 'grab-unit',
+      release: 'release-unit',
+      leave: 'release-unit',
+      split: 'split-unit',
+      splitWith: 'split-unit',
+      join: 'join-unit',
+      coverUnit: 'cover-unit',
+      dispute: 'dispute-unit',
+      cancel: 'cancel-dispute',
+    };
+    if (EV[verb]) socket.emit(EV[verb], { sessionId, itemId, unitIndex });
+
+    // Flash messages for immediate feedback
+    const it = state.items.find((i) => String(i.id) === String(itemId));
+    if (verb === 'grab') flash(`Yours — ${it?.name || ''}`);
+    else if (verb === 'split') flash(`You split it — others can jump in`);
+    else if (verb === 'join') flash(`You're in — ${it?.name || ''}`);
+    else if (verb === 'coverUnit') flash(`You're covering the whole ${it?.name || ''}`);
+  }
+
+  // ── Socket setup ─────────────────────────────────────────────────────
   useEffect(() => {
+    if (!socket) return;
     if (!socket.connected) socket.connect();
-    const identity = { sessionId, guestName: state.currentUser?.name, isHost: state.currentUser?.isHost };
+
+    const identity = {
+      sessionId,
+      guestName: myName,
+      isHost: state.currentUser?.isHost,
+    };
     socket.emit('rejoin-room', identity);
 
     fetch(`${BACKEND_URL}/api/session/${sessionId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(session => { if (session) dispatch({ type: 'LOAD_SESSION', session }); })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((session) => { if (session) dispatch({ type: 'LOAD_SESSION', session }); })
       .catch(() => {});
 
     function onSyncItems({ items }) { dispatch({ type: 'SYNC_ITEMS', items }); }
@@ -37,445 +361,234 @@ export default function ClaimItems() {
     function onSessionUpdated(session) { if (session) dispatch({ type: 'LOAD_SESSION', session }); }
     function onReconnect() { socket.emit('rejoin-room', identity); }
 
-    socket.on('item-claimed',      onSyncItems);
-    socket.on('item-unclaimed',    onSyncItems);
-    socket.on('item-disputed',     onSyncItems);
-    socket.on('dispute-cancelled', onSyncItems);
-    socket.on('guest-joined',      onGuestJoined);
-    socket.on('session-updated',   onSessionUpdated);
-    socket.on('connect',           onReconnect);
+    socket.on('items-updated', onSyncItems);
+    socket.on('session-updated', onSessionUpdated);
+    socket.on('guest-joined', onGuestJoined);
+    socket.on('connect', onReconnect);
 
     return () => {
-      socket.off('item-claimed',      onSyncItems);
-      socket.off('item-unclaimed',    onSyncItems);
-      socket.off('item-disputed',     onSyncItems);
-      socket.off('dispute-cancelled', onSyncItems);
-      socket.off('guest-joined',      onGuestJoined);
-      socket.off('session-updated',   onSessionUpdated);
-      socket.off('connect',           onReconnect);
+      socket.off('items-updated', onSyncItems);
+      socket.off('session-updated', onSessionUpdated);
+      socket.off('guest-joined', onGuestJoined);
+      socket.off('connect', onReconnect);
     };
-  }, [dispatch, sessionId]);
+  }, [dispatch, sessionId, myName]);
 
-  // ── Regular item handlers ──────────────────────────────────────────
-  function handleClaim(item) {
-    const myClaim = item.claims.find(c => c.guestName === myName);
-    if (myClaim) {
-      socket.emit('unclaim-item', { sessionId, itemId: item.id, guestName: myName });
-      dispatch({ type: 'UNCLAIM_ITEM', itemId: item.id, guestName: myName });
-    } else if (item.claims.length === 0) {
-      setSplitModalItem(item);
-      setSplitCount(1);
+  // ── Contextual options per (item, unit) ──────────────────────────────
+  function actionsFor(it, idx) {
+    const u = it.units[idx];
+    const mineIn = u.claims.includes(myName);
+    const others = u.claims.filter((n) => n !== myName);
+    const isShared = !!u.shared;
+    const A = [];
+
+    if (others.length && !isShared && !mineIn) {
+      // Held by someone else
+      A.push({ icon: 'users', label: 'I split this', sub: `Keeps ${others[0]} on it — others can tap "I'm in"`, onClick: () => act(it.id, idx, 'splitWith') });
+      A.push({ icon: 'gift', label: "I'm covering this", sub: `Pay ${others[0]}'s $${unitPrice(it).toFixed(2)} myself`, onClick: () => act(it.id, idx, 'coverUnit') });
+      A.push({ icon: 'hand', label: 'Actually, this is mine', sub: `Ask ${others[0]} to hand it over`, onClick: () => act(it.id, idx, 'dispute') });
+    } else if (isShared && mineIn) {
+      // I'm in a split
+      A.push({ icon: 'user-minus', label: 'Leave the split', onClick: () => act(it.id, idx, 'leave') });
+      A.push({ icon: 'gift', label: "I'm covering it all instead", sub: `Pay the whole $${unitPrice(it).toFixed(2)}`, onClick: () => act(it.id, idx, 'coverUnit') });
+    } else if (isShared && !mineIn) {
+      // A split I'm not in
+      A.push({ icon: 'plus', label: "I'm in", sub: `Split it ${u.claims.length + 1} ways`, onClick: () => act(it.id, idx, 'join') });
+      A.push({ icon: 'gift', label: "I'm covering it all instead", sub: 'Takes everyone else off it', onClick: () => act(it.id, idx, 'coverUnit') });
+    } else if (mineIn) {
+      // My solo claim
+      A.push({ icon: 'users', label: 'I split this', sub: 'Others can tap "I\'m in"', onClick: () => act(it.id, idx, 'split') });
+      A.push({ icon: 'x', label: 'Remove me', danger: true, onClick: () => act(it.id, idx, 'release') });
     } else {
-      const isShared = item.claims.some(c => c.splitCount > 1);
-      if (isShared) {
-        const existingSplitCount = item.claims[0].splitCount;
-        socket.emit('claim-item', { sessionId, itemId: item.id, guestName: myName, splitCount: existingSplitCount });
-        dispatch({ type: 'CLAIM_ITEM', itemId: item.id, guestName: myName, splitCount: existingSplitCount });
-      }
+      // Open
+      A.push({ icon: 'check', label: 'I ordered this', onClick: () => act(it.id, idx, 'grab') });
+      A.push({ icon: 'users', label: 'I split this', sub: 'Others can tap "I\'m in"', onClick: () => act(it.id, idx, 'split') });
+      A.push({ icon: 'gift', label: "I'm covering this", sub: 'Pay for it entirely', onClick: () => act(it.id, idx, 'coverUnit') });
     }
+    return A;
   }
 
-  function confirmClaim() {
-    if (!splitModalItem) return;
-    socket.emit('claim-item', { sessionId, itemId: splitModalItem.id, guestName: myName, splitCount });
-    dispatch({ type: 'CLAIM_ITEM', itemId: splitModalItem.id, guestName: myName, splitCount });
-    setSplitModalItem(null);
-  }
+  // ── Derived state ────────────────────────────────────────────────────
+  const myTotal = calculatePersonTotal(state, myName).total;
+  const items = state.items;
+  const unclaimedItems = items.filter((it) => it.units.every((u) => u.claims.length === 0));
+  const hasMyClaim = items.some((it) => it.units.some((u) => u.claims.includes(myName)));
+  const menuItem = menu && items.find((it) => String(it.id) === String(menu.id));
 
-  function handleShare(item, e) {
-    e.stopPropagation();
-    setShareModalItem(item);
-    setShareCount(item.claims.length + 1);
-  }
-
-  function confirmShare() {
-    if (!shareModalItem) return;
-    const minCount  = shareModalItem.claims.length + 1;
-    const finalCount = Math.max(minCount, shareCount);
-    socket.emit('share-item', { sessionId, itemId: shareModalItem.id, guestName: myName, splitCount: finalCount });
-    dispatch({ type: 'SHARE_ITEM', itemId: shareModalItem.id, guestName: myName, splitCount: finalCount });
-    setShareModalItem(null);
-  }
-
-  function handleDispute(item, e) {
-    e.stopPropagation();
-    socket.emit('dispute-item', { sessionId, itemId: item.id, disputerName: myName });
-    dispatch({ type: 'DISPUTE_ITEM', itemId: item.id, disputerName: myName });
-  }
-
-  function handleCancelDispute(item, e) {
-    e.stopPropagation();
-    socket.emit('cancel-dispute', { sessionId, itemId: item.id, disputerName: myName });
-    dispatch({ type: 'CANCEL_DISPUTE', itemId: item.id });
-  }
-
-  function handleRelease(item, e) {
-    e.stopPropagation();
-    socket.emit('unclaim-item', { sessionId, itemId: item.id, guestName: myName });
-    dispatch({ type: 'UNCLAIM_ITEM', itemId: item.id, guestName: myName });
-  }
-
-  // ── Quantity item handlers ─────────────────────────────────────────
-  function openUnitsModal(item, e) {
-    e.stopPropagation();
-    const totalClaimed = item.claims.reduce((s, c) => s + (c.units || 0), 0);
-    const myClaim      = item.claims.find(c => c.guestName === myName);
-    const remaining    = item.quantity - totalClaimed;
-    if (myClaim) {
-      // Already have units — unclaim
-      socket.emit('unclaim-units', { sessionId, itemId: item.id, guestName: myName });
-      dispatch({ type: 'UNCLAIM_UNITS', itemId: item.id, guestName: myName });
-    } else if (remaining > 0) {
-      setUnitsModalItem(item);
-      setUnitsCount(1);
-    }
-  }
-
-  function confirmUnits() {
-    if (!unitsModalItem) return;
-    socket.emit('claim-units', { sessionId, itemId: unitsModalItem.id, guestName: myName, units: unitsCount });
-    dispatch({ type: 'CLAIM_UNITS', itemId: unitsModalItem.id, guestName: myName, units: unitsCount });
-    setUnitsModalItem(null);
-  }
-
-  // ── Done ───────────────────────────────────────────────────────────
-  const isHost = state.currentUser?.isHost;
+  // ── Done handler ─────────────────────────────────────────────────────
   function handleDone() {
-    socket.emit('done-claiming', { sessionId, guestName: myName });
-    navigate(isHost ? `/host/${sessionId}` : `/summary/${sessionId}`);
+    if (unclaimedItems.length > 0) {
+      setConfirm(true);
+    } else {
+      navigate(`/summary/${sessionId}`);
+    }
   }
 
-  const myTotal = calculatePersonTotal(state, myName);
-
-  // Joined before the host finished setting up — wait and fill in live.
-  if (state.items.length === 0) {
+  // ── Loading state ────────────────────────────────────────────────────
+  if (items.length === 0) {
     return (
-      <div className="page" style={{ justifyContent: 'center' }}>
-        <div className="text-center">
-          <div className="spinner spinner-lg" style={{ margin: '0 auto 16px' }} />
-          <h2>Hang tight, {myName} 👋</h2>
-          <p className="text-muted mt-8">
-            {state.hostName || 'The host'} is still adding items. This screen updates automatically.
-          </p>
+      <div className="app-shell">
+        <div className="app-body pg" style={{ justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div className="spinner spinner-lg" style={{ margin: '0 auto 16px' }} />
+            <h2>Hang tight, {myName} 👋</h2>
+            <p style={{ color: 'var(--ink-3)', marginTop: 8 }}>
+              {host || 'The host'} is still adding items. This screen updates automatically.
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
-  // ── Render ─────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────
   return (
-    <div className="page">
-      <div className="page-header">
-        <h2>Hey {myName} 👋</h2>
-        <p>Tap the items you ordered</p>
-      </div>
+    <div className="app-shell">
+      <div className="app-body pg">
 
-      <div className="card">
-        {state.items.map((item) => {
-          const isQuantity = (item.quantity || 1) > 1;
-          return isQuantity
-            ? <QuantityItemRow key={item.id} item={item} myName={myName} formatPrice={formatPrice} openUnitsModal={openUnitsModal} />
-            : <RegularItemRow  key={item.id} item={item} myName={myName} formatPrice={formatPrice}
-                handleClaim={handleClaim} handleShare={handleShare} handleDispute={handleDispute}
-                handleCancelDispute={handleCancelDispute} handleRelease={handleRelease} />;
-        })}
-      </div>
-
-      {/* Running total */}
-      <div className="card card-surface mt-16">
-        <div className="total-row">
-          <span>Your items</span>
-          <span className="fw-700">{formatPrice(myTotal.itemsTotal)}</span>
-        </div>
-        {myTotal.adminFeeShare > 0 && (
-          <div className="total-row">
-            <span className="text-muted">+ Admin Fee</span>
-            <span>{formatPrice(myTotal.adminFeeShare)}</span>
+        {/* Header */}
+        <div className="claim-head">
+          <div className="h1">
+            Hey {myName}{' '}
+            <span className="wave-em">
+              <Icon name="hand" size={24} color="var(--clay)" stroke={2} />
+            </span>
           </div>
+          <p className="lead" style={{ marginTop: 4 }}>
+            Tap what you ordered. Shared it? Hit the{' '}
+            <b style={{ color: 'var(--clay-deep)' }}>⋯</b>{' '}
+            for every way to split.
+          </p>
+        </div>
+
+        {/* Item cards */}
+        <div className="icards">
+          {items.map((it) => {
+            const sig = it.units
+              .map((u) => (u.shared ? 's' : '') + u.claims.join('.') + (u.dispute ? 'D' + u.dispute.by : ''))
+              .join('|');
+            return (
+              <ItemCard
+                key={it.id + ':' + sig}
+                item={it}
+                me={myName}
+                onUnit={(idx, v) => act(it.id, idx, v)}
+                onMenu={(idx) => setMenu({ id: it.id, idx })}
+              />
+            );
+          })}
+        </div>
+
+        {/* Unclaimed hint */}
+        {unclaimedItems.length > 0 && (
+          <p className="unclaimed-hint">
+            <Icon name="hand-coins" size={15} stroke={2} />{' '}
+            {unclaimedItems.length} item{unclaimedItems.length === 1 ? '' : 's'} no one's grabbed yet
+          </p>
         )}
-        <div className="total-row">
-          <span className="text-muted">+ Tax</span>
-          <span>{formatPrice(myTotal.taxShare)}</span>
-        </div>
-        <div className="total-row">
-          <span className="text-muted">+ Tip {state.tipIncluded ? '(included)' : state.tipMode === 'dollar' ? '(flat)' : `(${state.tipPercent}%)`}</span>
-          <span>{formatPrice(myTotal.tipShare)}</span>
-        </div>
-        {myTotal.discountShare > 0 && (
-          <div className="total-row">
-            <span className="text-muted">− Discount</span>
-            <span style={{ color: 'var(--color-success, #2e7d32)' }}>−{formatPrice(myTotal.discountShare)}</span>
+
+        {/* Sticky footer bar */}
+        <div className="fbar">
+          <div className="fbar-card">
+            <div className="fbar-tot">
+              <div className="l">Your share so far</div>
+              <div className="v mono">{fmt(myTotal)}</div>
+            </div>
+            <Button
+              variant="clay"
+              icon="arrow-right"
+              full={false}
+              disabled={!hasMyClaim}
+              onClick={handleDone}
+            >
+              I'm done
+            </Button>
           </div>
-        )}
-        <div className="total-row total-row-final">
-          <span>Your total</span>
-          <span>{formatPrice(myTotal.total)}</span>
         </div>
-      </div>
 
-      <div className="spacer" />
-      <button className="btn btn-primary mt-24" onClick={handleDone}>I'm Done Claiming</button>
-      {isHost && (
-        <button className="btn btn-ghost mt-8" onClick={() => navigate('/review')} style={{ fontSize: '0.875rem' }}>
-          Edit Receipt
-        </button>
-      )}
+        {/* Toast */}
+        {toastMsg && <div className="toast">{toastMsg}</div>}
 
-      {/* ── Units modal (quantity items) ── */}
-      {unitsModalItem && (() => {
-        const totalClaimed = unitsModalItem.claims.reduce((s, c) => s + (c.units || 0), 0);
-        const remaining    = unitsModalItem.quantity - totalClaimed;
-        return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '20px' }}
-            onClick={(e) => { if (e.target === e.currentTarget) setUnitsModalItem(null); }}>
-            <div style={{ background: 'var(--color-bg)', borderRadius: 'var(--radius-xl)', padding: '24px', width: '100%', maxWidth: '400px' }}>
-              <h3 className="mb-4">How many {unitsModalItem.name}?</h3>
-              <p className="text-sm text-muted mb-16">
-                {formatPrice(unitsModalItem.unitPrice || unitsModalItem.price / unitsModalItem.quantity)} each · {remaining} of {unitsModalItem.quantity} remaining
-              </p>
-
-              {/* Quick-select buttons */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                {Array.from({ length: remaining }, (_, i) => i + 1).map(n => (
-                  <button key={n} onClick={() => setUnitsCount(n)}
-                    style={{
-                      flex: '1 1 56px', padding: '12px 8px', borderRadius: '10px', border: 'none',
-                      background: unitsCount === n ? 'var(--color-accent)' : 'var(--color-surface)',
-                      color: unitsCount === n ? '#fff' : 'var(--color-text)',
-                      fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
-                    }}>
-                    {n === unitsModalItem.quantity ? 'All' : n}
-                    <span style={{ display: 'block', fontSize: '0.688rem', fontWeight: 400, opacity: 0.75, marginTop: '2px' }}>
-                      {formatPrice((unitsModalItem.unitPrice || unitsModalItem.price / unitsModalItem.quantity) * n)}
+        {/* Options action sheet */}
+        {menuItem && (
+          <SheetPortal>
+            <div className="scrim" onClick={(e) => e.target === e.currentTarget && setMenu(null)}>
+              <div className="sheet" style={{ textAlign: 'left' }}>
+                <div className="sheet-grip" />
+                <div className="menu-title">
+                  {menuItem.name}{menuItem.units.length > 1 ? ` · one of ${menuItem.units.length}` : ''}
+                </div>
+                <p className="cap menu-sub" style={{ marginBottom: 14 }}>
+                  {fmt(unitPrice(menuItem))}{menuItem.units.length > 1 ? ' each' : ''}
+                </p>
+                {actionsFor(menuItem, menu.idx).map((a, i) => (
+                  <button
+                    key={i}
+                    className={`act-row ${a.danger ? 'danger' : ''}`}
+                    onClick={() => { a.onClick(); setMenu(null); }}
+                  >
+                    <span className="ai"><Icon name={a.icon} size={19} stroke={2} /></span>
+                    <span>
+                      <span>{a.label}</span>
+                      {a.sub && <span className="as">{a.sub}</span>}
                     </span>
                   </button>
                 ))}
+                {menuItem.units.length > 1 && (
+                  <button
+                    className="act-row"
+                    onClick={() => { act(menuItem.id, 0, 'coverItem'); setMenu(null); }}
+                  >
+                    <span className="ai"><Icon name="hand-coins" size={19} stroke={2} /></span>
+                    <span>
+                      <span>I had all {menuItem.units.length}</span>
+                      <span className="as">Put the whole {fmt(menuItem.price)} on me</span>
+                    </span>
+                  </button>
+                )}
               </div>
+            </div>
+          </SheetPortal>
+        )}
 
-              <div className="flex-col gap-8">
-                <button className="btn btn-primary" onClick={confirmUnits}>
-                  Claim {unitsCount === 1 ? '1 unit' : `${unitsCount} units`} — {formatPrice((unitsModalItem.unitPrice || unitsModalItem.price / unitsModalItem.quantity) * unitsCount)}
-                </button>
-                <button className="btn btn-ghost" onClick={() => setUnitsModalItem(null)}>Cancel</button>
+        {/* Unclaimed-items guard sheet */}
+        {confirm && (
+          <SheetPortal>
+            <div className="scrim" onClick={(e) => e.target === e.currentTarget && setConfirm(false)}>
+              <div className="sheet" style={{ textAlign: 'left' }}>
+                <div className="sheet-grip" />
+                <div className="h2" style={{ textAlign: 'center' }}>A few things are unclaimed</div>
+                <p className="cap" style={{ textAlign: 'center', marginBottom: 16 }}>
+                  Nobody tapped these yet. Leave them and they stay on {host}'s tab.
+                </p>
+                <div className="unclaimed-list">
+                  {unclaimedItems.map((it) => (
+                    <div className="srow" key={it.id} style={{ borderColor: 'var(--line-2)' }}>
+                      <span className="nm">
+                        {it.name}{it.units.length > 1 ? ` ×${it.units.length}` : ''}
+                      </span>
+                      <span className="pr mono">{fmt(it.price)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 18 }}>
+                  <Button variant="soft" icon="hand-coins" onClick={() => setConfirm(false)}>
+                    Keep claiming
+                  </Button>
+                  <Button
+                    variant="clay"
+                    icon="arrow-right"
+                    onClick={() => { setConfirm(false); navigate(`/summary/${sessionId}`); }}
+                  >
+                    Leave on {host}'s tab
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
-
-      {/* ── Share modal (regular items) ── */}
-      {shareModalItem && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '20px' }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShareModalItem(null); }}>
-          <div style={{ background: 'var(--color-bg)', borderRadius: 'var(--radius-xl)', padding: '24px', width: '100%', maxWidth: '400px' }}>
-            <h3 className="mb-8">🤝 I shared this</h3>
-            <p className="text-sm text-muted mb-4">"{shareModalItem.name}" — {formatPrice(shareModalItem.price)}</p>
-            <p className="text-sm text-muted mb-16">
-              {shareModalItem.claims.length} person{shareModalItem.claims.length > 1 ? 's have' : ' has'} already claimed this.
-              How many people shared it <strong>including you</strong>?
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
-              <button className="btn btn-secondary btn-sm" style={{ width: '44px', padding: '10px' }}
-                onClick={() => setShareCount(Math.max(shareModalItem.claims.length + 1, shareCount - 1))}>−</button>
-              <span style={{ fontSize: '1.5rem', fontWeight: 800, minWidth: '30px', textAlign: 'center' }}>{shareCount}</span>
-              <button className="btn btn-secondary btn-sm" style={{ width: '44px', padding: '10px' }}
-                onClick={() => setShareCount(shareCount + 1)}>+</button>
-            </div>
-            <p className="text-sm text-muted mb-16" style={{ textAlign: 'center' }}>= {formatPrice(shareModalItem.price / shareCount)} each</p>
-            <div style={{ background: '#f5f5f5', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px' }}>
-              <p className="text-sm" style={{ fontWeight: 600, marginBottom: '4px' }}>Who pays what:</p>
-              {shareModalItem.claims.map(c => (
-                <p key={c.guestName} className="text-sm text-muted">{c.guestName}: {formatPrice(shareModalItem.price / shareCount)}</p>
-              ))}
-              <p className="text-sm" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>You: {formatPrice(shareModalItem.price / shareCount)}</p>
-            </div>
-            <div className="flex-col gap-8">
-              <button className="btn btn-primary" onClick={confirmShare}>Add my share ({formatPrice(shareModalItem.price / shareCount)})</button>
-              <button className="btn btn-ghost" onClick={() => setShareModalItem(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Split modal (regular items, no previous claims) ── */}
-      {splitModalItem && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 100, padding: '20px' }}
-          onClick={(e) => { if (e.target === e.currentTarget) setSplitModalItem(null); }}>
-          <div style={{ background: 'var(--color-bg)', borderRadius: 'var(--radius-xl)', padding: '24px', width: '100%', maxWidth: '400px' }}>
-            <h3 className="mb-8">Claim "{splitModalItem.name}"</h3>
-            <p className="text-sm text-muted mb-16">{formatPrice(splitModalItem.price)} — did you share this item?</p>
-            <label className="input-label">How many people shared this?</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
-              <button className="btn btn-secondary btn-sm" style={{ width: '44px', padding: '10px' }}
-                onClick={() => setSplitCount(Math.max(1, splitCount - 1))}>−</button>
-              <span style={{ fontSize: '1.5rem', fontWeight: 800, minWidth: '30px', textAlign: 'center' }}>{splitCount}</span>
-              <button className="btn btn-secondary btn-sm" style={{ width: '44px', padding: '10px' }}
-                onClick={() => setSplitCount(splitCount + 1)}>+</button>
-              <span className="text-muted text-sm" style={{ flex: 1 }}>= {formatPrice(splitModalItem.price / splitCount)} each</span>
-            </div>
-            <div className="flex-col gap-8">
-              <button className="btn btn-primary" onClick={confirmClaim}>
-                {splitCount === 1 ? 'Claim — just me' : `Claim my share (${formatPrice(splitModalItem.price / splitCount)})`}
-              </button>
-              <button className="btn btn-ghost" onClick={() => setSplitModalItem(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Sub-component: quantity item row ──────────────────────────────────
-function QuantityItemRow({ item, myName, formatPrice, openUnitsModal }) {
-  const totalClaimed = item.claims.reduce((s, c) => s + (c.units || 0), 0);
-  const remaining    = item.quantity - totalClaimed;
-  const myClaim      = item.claims.find(c => c.guestName === myName);
-  const myUnits      = myClaim?.units || 0;
-  const unitPrice    = item.unitPrice || (item.price / item.quantity);
-
-  const allClaimed   = remaining === 0;
-  const iMineOnly    = myUnits > 0;
-
-  return (
-    <div className="item-row" style={{ cursor: 'pointer' }} onClick={(e) => openUnitsModal(item, e)}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Title row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{
-            width: '22px', height: '22px', borderRadius: '6px', flexShrink: 0,
-            background: myUnits > 0 ? 'var(--color-accent)' : allClaimed ? 'var(--color-border)' : '#fff3e0',
-            border: myUnits > 0 ? 'none' : allClaimed ? 'none' : '2px solid #ffb74d',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: '0.75rem', fontWeight: 700, transition: 'all 0.15s',
-          }}>
-            {myUnits > 0 ? myUnits : allClaimed ? '🔒' : ''}
-          </span>
-          <span className="item-name">
-            {item.name}
-            <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', marginLeft: '4px' }}>×{item.quantity}</span>
-          </span>
-        </div>
-
-        {/* Subtitle: unit price + remaining */}
-        <div style={{ marginTop: '4px', marginLeft: '30px', display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-          <span className="text-sm text-muted">{formatPrice(unitPrice)} each</span>
-          {remaining > 0 && !myUnits && (
-            <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 7px', borderRadius: '8px', background: '#fff3e0', color: '#e65100' }}>
-              {remaining} left
-            </span>
-          )}
-          {remaining === 0 && !myUnits && (
-            <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 7px', borderRadius: '8px', background: 'var(--color-border)', color: 'var(--color-text-muted)' }}>
-              All claimed
-            </span>
-          )}
-        </div>
-
-        {/* Per-person claim badges */}
-        {item.claims.length > 0 && (
-          <div style={{ marginTop: '6px', marginLeft: '30px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-            {item.claims.map(c => (
-              <span key={c.guestName} className="claim-badge"
-                style={{ background: c.guestName === myName ? 'var(--color-accent)' : undefined, color: c.guestName === myName ? '#fff' : undefined }}>
-                {c.guestName === myName ? 'You' : c.guestName} ×{c.units}
-              </span>
-            ))}
-          </div>
+          </SheetPortal>
         )}
 
-        {/* Unclaim button if I have units */}
-        {myUnits > 0 && (
-          <div style={{ marginTop: '6px', marginLeft: '30px' }}>
-            <button
-              style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '0.75rem', cursor: 'pointer' }}
-              onClick={(e) => openUnitsModal(item, e)}
-            >
-              Remove my {myUnits === 1 ? 'unit' : `${myUnits} units`}
-            </button>
-          </div>
-        )}
       </div>
-
-      <span className="item-price">{formatPrice(item.price)}</span>
-    </div>
-  );
-}
-
-// ── Sub-component: regular (non-quantity) item row ────────────────────
-function RegularItemRow({ item, myName, formatPrice, handleClaim, handleShare, handleDispute, handleCancelDispute, handleRelease }) {
-  const myClaim         = item.claims.find(c => c.guestName === myName);
-  const otherClaims     = item.claims.filter(c => c.guestName !== myName);
-  const isMine          = !!myClaim;
-  const isShared        = item.claims.some(c => c.splitCount > 1);
-  const isLocked        = !isMine && item.claims.length > 0 && !isShared;
-  const isClaimedByOther = !isMine && item.claims.length > 0;
-  const hasDispute      = !!item.dispute;
-  const disputeIsFromMe = hasDispute && item.dispute.by === myName;
-  const disputeIsAboutMe = hasDispute && isMine && item.dispute.by !== myName;
-
-  return (
-    <div className="item-row" onClick={() => handleClaim(item)}
-      style={{ cursor: isLocked ? 'default' : 'pointer', opacity: isLocked && !hasDispute ? 0.6 : 1, position: 'relative' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{
-            width: '22px', height: '22px', borderRadius: '6px', flexShrink: 0, transition: 'all 0.15s ease',
-            border: isMine ? 'none' : isLocked ? 'none' : '2px solid var(--color-border)',
-            background: isMine ? 'var(--color-accent)' : isLocked ? 'var(--color-border)' : isShared && isClaimedByOther ? '#fff3e0' : 'transparent',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: '0.75rem', fontWeight: 700,
-          }}>
-            {isMine && '✓'}
-            {isLocked && '🔒'}
-          </span>
-          <span className="item-name">{item.name}</span>
-        </div>
-
-        {item.claims.length > 0 && (
-          <div style={{ marginTop: '6px', marginLeft: '30px' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-              {item.claims.map(c => (
-                <span key={c.guestName} className="claim-badge"
-                  style={{ background: c.guestName === myName ? 'var(--color-accent)' : undefined, color: c.guestName === myName ? '#fff' : undefined }}>
-                  {c.guestName === myName ? 'You' : c.guestName}
-                </span>
-              ))}
-            </div>
-            {item.claims[0]?.splitCount > 1 && (
-              <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '3px' }}>
-                Split {item.claims[0].splitCount} ways — {formatPrice(item.price / item.claims[0].splitCount)} each
-              </p>
-            )}
-          </div>
-        )}
-
-        {disputeIsAboutMe && (
-          <div style={{ marginTop: '8px', marginLeft: '30px', padding: '8px 12px', borderRadius: '8px', background: '#fff3e0', border: '1px solid #ffb74d', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-            <span style={{ fontSize: '0.813rem', fontWeight: 600, color: '#e65100' }}>{item.dispute.by} says this is theirs</span>
-            <button className="btn btn-sm" style={{ background: '#fff', border: '1px solid #ffb74d', color: '#e65100', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap' }}
-              onClick={(e) => handleRelease(item, e)}>Release Item</button>
-          </div>
-        )}
-
-        {disputeIsFromMe && isClaimedByOther && (
-          <div style={{ marginTop: '8px', marginLeft: '30px', padding: '8px 12px', borderRadius: '8px', background: '#e3f2fd', border: '1px solid #90caf9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-            <span style={{ fontSize: '0.813rem', fontWeight: 600, color: '#1565c0' }}>Waiting for {otherClaims[0]?.guestName} to release</span>
-            <button className="btn btn-sm" style={{ background: '#fff', border: '1px solid #90caf9', color: '#1565c0', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap' }}
-              onClick={(e) => handleCancelDispute(item, e)}>Never Mind</button>
-          </div>
-        )}
-
-        {isClaimedByOther && !isMine && !hasDispute && (
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px', marginLeft: '30px' }}>
-            <button style={{ padding: '6px 12px', borderRadius: '8px', background: '#e8f5e9', border: '1px solid #81c784', color: '#2e7d32', fontSize: '0.813rem', fontWeight: 600, cursor: 'pointer' }}
-              onClick={(e) => handleShare(item, e)}>🤝 I shared this</button>
-            <button style={{ padding: '6px 12px', borderRadius: '8px', background: 'transparent', border: '1px dashed var(--color-accent)', color: 'var(--color-accent)', fontSize: '0.813rem', fontWeight: 600, cursor: 'pointer' }}
-              onClick={(e) => handleDispute(item, e)}>This is actually mine</button>
-          </div>
-        )}
-      </div>
-      <span className="item-price">{formatPrice(item.price)}</span>
     </div>
   );
 }
