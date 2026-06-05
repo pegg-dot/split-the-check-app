@@ -299,6 +299,10 @@ export default function ClaimItems() {
 
   const myName = state.currentUser?.name;
   const host = state.hostName;
+  const isHost = state.currentUser?.isHost;
+  // The host collects rather than pays, so "done" returns them to the dashboard;
+  // guests go to their pay summary.
+  const doneDest = isHost ? `/host/${sessionId}` : `/summary/${sessionId}`;
   const [toastMsg, setToastMsg] = useState(null);
   const [menu, setMenu] = useState(null);     // { id, idx } whose options sheet is open
   const [confirm, setConfirm] = useState(false); // unclaimed-items guard sheet
@@ -441,7 +445,7 @@ export default function ClaimItems() {
       setConfirm(true);
     } else {
       if (socket) socket.emit('done-claiming', { sessionId });
-      navigate(`/summary/${sessionId}`);
+      navigate(doneDest);
     }
   }
 
@@ -469,6 +473,11 @@ export default function ClaimItems() {
 
         {/* Header */}
         <div className="claim-head">
+          {isHost && (
+            <button className="back" onClick={() => navigate(`/host/${sessionId}`)}>
+              <Icon name="arrow-left" size={18} stroke={2.2} /> Dashboard
+            </button>
+          )}
           <div className="h1">
             Hey {myName}{' '}
             <span className="wave-em">
@@ -600,7 +609,7 @@ export default function ClaimItems() {
                   <Button
                     variant="clay"
                     icon="arrow-right"
-                    onClick={() => { setConfirm(false); if (socket) socket.emit('done-claiming', { sessionId }); navigate(`/summary/${sessionId}`); }}
+                    onClick={() => { setConfirm(false); if (socket) socket.emit('done-claiming', { sessionId }); navigate(doneDest); }}
                   >
                     Leave on {host}'s tab
                   </Button>

@@ -433,8 +433,8 @@ export default function HostDashboard() {
 
         {/* Footer actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 24 }}>
-          <Button variant="soft" icon="edit-3" onClick={() => navigate(`/claim/${sessionId}`)}>
-            Edit My Items
+          <Button variant="soft" icon="hand" onClick={() => navigate(`/claim/${sessionId}`)}>
+            Claim my items
           </Button>
           {allSettled && (
             <Button variant="ghost" icon="check-circle" onClick={() => navigate('/')}>
