@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession, currencySymbol } from '../context/SessionContext';
 import { BACKEND_URL } from '../context/socket';
-import { getHistory } from '../lib/history';
+import { getHistory, removeSplit } from '../lib/history';
 import { Icon, Button } from '../components/ui';
 
 export default function Home() {
@@ -13,9 +13,14 @@ export default function Home() {
   const [currency, setCurrency] = useState('USD');
   const [verifying, setVerifying] = useState(false);
   const [venmoStatus, setVenmoStatus] = useState(null); // { valid, displayName, note, error }
-  const [history] = useState(() =>
+  const [history, setHistory] = useState(() =>
     typeof localStorage !== 'undefined' ? getHistory() : []
   );
+  const [showRecent, setShowRecent] = useState(false); // recent splits are tucked away by default
+  function closeSplit(id) {
+    removeSplit(id);
+    setHistory((list) => list.filter((s) => s.id !== id));
+  }
 
   // A split restored from localStorage (refresh safety net) → offer to resume.
   const hasInProgress = (state.items && state.items.length > 0) || !!state.sessionId;
@@ -92,36 +97,23 @@ export default function Home() {
           <Icon name="arrow-left" size={16} stroke={2.2} /> Back
         </button>
 
-        {/* Resume in-progress banner */}
+        {/* In-progress split — a quiet single line, easy to resume or dismiss */}
         {hasInProgress && (
-          <div className="field" style={{
-            background: 'var(--clay-soft)',
-            border: '1.5px solid var(--clay-edge)',
-            borderRadius: 'var(--r-md)',
-            padding: '14px 16px',
-            marginBottom: '16px',
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            fontSize: '0.85rem', color: 'var(--ink-2)', marginBottom: 14,
           }}>
-            <p style={{ fontWeight: 700, marginBottom: '10px', fontSize: '0.93rem' }}>
-              You have a split in progress{state.items?.length ? ` (${state.items.length} items)` : ''}
-            </p>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                type="button"
-                className="btn btn-clay"
-                style={{ flex: 1, padding: '10px 14px', fontSize: '0.9rem' }}
-                onClick={resumeInProgress}
-              >
-                Resume
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: '10px 14px', fontSize: '0.9rem', width: 'auto' }}
-                onClick={startNew}
-              >
-                Start new
-              </button>
-            </div>
+            <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              Split in progress{state.items?.length ? ` · ${state.items.length} items` : ''}
+            </span>
+            <button type="button" onClick={resumeInProgress}
+              style={{ background: 'none', border: 'none', color: 'var(--clay-deep)', fontWeight: 700, cursor: 'pointer', padding: '4px 6px' }}>
+              Resume
+            </button>
+            <button type="button" onClick={startNew} aria-label="Dismiss in-progress split" title="Start fresh"
+              style={{ background: 'none', border: 'none', color: 'var(--ink-3)', cursor: 'pointer', padding: '4px 6px', fontSize: '1rem' }}>
+              ×
+            </button>
           </div>
         )}
 
@@ -250,36 +242,56 @@ export default function Home() {
           </div>
         </form>
 
-        {/* Recent splits hosted on this device */}
+        {/* Recent splits — tucked behind a quiet toggle so they don't dominate the screen */}
         {history.length > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <p className="cap" style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-              Recent splits
-            </p>
-            <div style={{ background: 'var(--panel)', border: '1.5px solid var(--line)', borderRadius: 'var(--r-lg)', padding: '4px 0', boxShadow: 'var(--sh-soft)' }}>
-              {history.map((h) => (
-                <div
-                  key={h.id}
-                  onClick={() => navigate(`/host/${h.id}`)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px 18px', cursor: 'pointer', borderBottom: '1px solid var(--line-2)',
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <span style={{ fontWeight: 600, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {h.hostName || 'Split'}
+          <div style={{ marginTop: 20 }}>
+            <button
+              type="button"
+              onClick={() => setShowRecent((v) => !v)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0',
+                display: 'flex', alignItems: 'center', gap: 6,
+                color: 'var(--ink-3)', fontSize: '0.78rem', fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}
+            >
+              Recent splits ({history.length})
+              <Icon name={showRecent ? 'chevron-up' : 'chevron-down'} size={14} stroke={2.2} />
+            </button>
+            {showRecent && (
+              <div style={{ background: 'var(--panel)', border: '1.5px solid var(--line)', borderRadius: 'var(--r-lg)', padding: '4px 0', boxShadow: 'var(--sh-soft)', marginTop: 8 }}>
+                {history.map((h) => (
+                  <div
+                    key={h.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '10px 14px', borderBottom: '1px solid var(--line-2)',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => navigate(`/host/${h.id}`)}>
+                      <span style={{ fontWeight: 600, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {h.hostName || 'Split'}
+                      </span>
+                      <span className="cap">
+                        {h.guests} {h.guests === 1 ? 'guest' : 'guests'}
+                      </span>
+                    </div>
+                    <span className="mono" style={{ fontWeight: 700, flexShrink: 0 }}>
+                      {currencySymbol(h.currency)}{(Number(h.total) || 0).toFixed(2)}
                     </span>
-                    <span className="cap">
-                      {h.guests} {h.guests === 1 ? 'guest' : 'guests'}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); closeSplit(h.id); }}
+                      aria-label="Close split"
+                      title="Close this split"
+                      style={{ background: 'none', border: 'none', color: 'var(--ink-3)', cursor: 'pointer', padding: '2px 4px', fontSize: '1.05rem', flexShrink: 0 }}
+                    >
+                      ×
+                    </button>
                   </div>
-                  <span className="mono" style={{ fontWeight: 700, flexShrink: 0, marginLeft: 12 }}>
-                    {currencySymbol(h.currency)}{(Number(h.total) || 0).toFixed(2)}
-                  </span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
