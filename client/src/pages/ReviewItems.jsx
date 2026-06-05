@@ -17,7 +17,8 @@ export default function ReviewItems() {
   const [fees, setFees] = useState(() => {
     const list = [];
     let nextId = 1;
-    if (state.tax > 0) list.push({ id: nextId++, type: 'tax', label: 'Tax', amount: state.tax.toFixed(2) });
+    // Tax is always part of the bill — always present, editable but not removable.
+    list.push({ id: nextId++, type: 'tax', label: 'Tax', amount: (Number(state.tax) || 0).toFixed(2) });
     if (state.adminFee > 0) list.push({ id: nextId++, type: 'admin', label: 'Service Charge', amount: state.adminFee.toFixed(2) });
     if (state.tipIncluded && state.tipAmount > 0) list.push({ id: nextId++, type: 'gratuity', label: 'Gratuity', amount: state.tipAmount.toFixed(2), detected: true });
     if (state.discount > 0) list.push({ id: nextId++, type: 'discount', label: 'Discount', amount: state.discount.toFixed(2), detected: true });
@@ -123,7 +124,8 @@ export default function ReviewItems() {
   }
 
   function removeFee(id) {
-    setFees(fees.filter(f => f.id !== id));
+    // Never remove the tax row — tax is always calculated into the bill.
+    setFees(fees.filter(f => f.id !== id || f.type === 'tax'));
   }
 
   const formatPrice = (p) => fmtPrice(p, state.currency || 'USD');
@@ -307,13 +309,23 @@ export default function ReviewItems() {
                   style={{ paddingLeft: '28px', borderColor: fee.detected ? '#90caf9' : undefined, background: fee.detected ? '#e3f2fd' : undefined }}
                 />
               </div>
-              <button
-                onClick={() => removeFee(fee.id)}
-                aria-label="Remove"
-                style={{ width: '36px', height: '36px', borderRadius: '50%', border: 'none', background: 'var(--color-accent-light)', color: 'var(--color-accent)', cursor: 'pointer', fontSize: '1.1rem', fontWeight: 700, flexShrink: 0 }}
-              >
-                ×
-              </button>
+              {fee.type === 'tax' ? (
+                <span
+                  aria-label="Tax is always included"
+                  title="Tax is always included"
+                  style={{ width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)', fontSize: '0.95rem', flexShrink: 0 }}
+                >
+                  🔒
+                </span>
+              ) : (
+                <button
+                  onClick={() => removeFee(fee.id)}
+                  aria-label="Remove"
+                  style={{ width: '36px', height: '36px', borderRadius: '50%', border: 'none', background: 'var(--color-accent-light)', color: 'var(--color-accent)', cursor: 'pointer', fontSize: '1.1rem', fontWeight: 700, flexShrink: 0 }}
+                >
+                  ×
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -334,7 +346,6 @@ export default function ReviewItems() {
             flexDirection: 'column',
             gap: '4px',
           }}>
-            <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('tax', 'Tax')}>Tax / VAT / IVA</button>
             <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('admin', 'Service Charge')}>Service / Admin Fee</button>
             <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('discount', 'Discount')}>Discount / Comp / Promo</button>
             <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('admin', '')}>Other / Custom</button>
