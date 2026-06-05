@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession, formatPrice as fmtPrice, currencySymbol, round2 } from '../context/SessionContext';
 import { socket } from '../context/socket';
+import { Icon, Button } from '../components/ui';
 
 export default function ReviewItems() {
   const navigate = useNavigate();
@@ -109,7 +110,6 @@ export default function ReviewItems() {
       dispatch({ type: 'SET_TIP_PERCENT', percent: 0 });
       dispatch({ type: 'SET_TIP_DOLLAR', amount: 0 });
     }
-    console.log('[ReviewItems] Navigating to /tip');
     navigate('/tip');
   }
 
@@ -149,265 +149,374 @@ export default function ReviewItems() {
     : null;
 
   return (
-    <div className="page">
-      <button className="btn btn-ghost btn-sm" onClick={() => navigate('/scan')} style={{ alignSelf: 'flex-start', marginBottom: '8px', padding: '6px 0' }}>← Back to Scan</button>
-      <div className="page-header">
-        <h1>Review Items</h1>
-        <p>{state.items.length} items found</p>
-      </div>
+    <div className="app-shell">
+      <div className="app-body pg">
 
-      <div className="card">
-        {state.items.length === 0 && !addingNew && (
-          <div className="text-center" style={{ padding: '24px 0' }}>
-            <p className="text-muted">No items yet. Add them manually below.</p>
+        {/* Back */}
+        <button className="back" onClick={() => navigate('/scan')}>
+          <Icon name="arrow-left" size={16} stroke={2.2} />
+          Back to Scan
+        </button>
+
+        {/* Header */}
+        <div className="claim-head">
+          <div className="h1">
+            Review <span className="serif-i" style={{ fontSize: '1.9rem' }}>items</span>
           </div>
-        )}
+          <p className="lead" style={{ marginTop: 4 }}>
+            {state.items.length} item{state.items.length !== 1 ? 's' : ''} found
+          </p>
+        </div>
 
-        {groupedItems.map((group) => {
-          const isEditingThisGroup = editingGroup === group;
+        {/* ── Items card ─────────────────────────────────────────────── */}
+        <div className="sum-card" style={{ boxShadow: 'var(--sh-soft)', border: '1.5px solid var(--line)' }}>
 
-          if (isEditingThisGroup) {
-            const editItem = group.items.find(i => i.id === editingId);
-            return (
-              <div key={editItem.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--color-border-light)' }}>
-                {/* Name + unit price */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                  <input className="input" value={editName} onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Item name" style={{ flex: 1 }} />
-                  <div style={{ position: 'relative', width: '100px' }}>
-                    <input className="input" value={editPrice} onChange={(e) => setEditPrice(e.target.value)}
-                      placeholder="0.00" type="number" step="0.01" style={{ width: '100%', paddingLeft: editQty > 1 ? '8px' : undefined }} />
+          {state.items.length === 0 && !addingNew && (
+            <div style={{ padding: '16px 0', textAlign: 'center' }}>
+              <p className="cap">No items yet. Add them manually below.</p>
+            </div>
+          )}
+
+          {groupedItems.map((group) => {
+            const isEditingThisGroup = editingGroup === group;
+
+            if (isEditingThisGroup) {
+              const editItem = group.items.find(i => i.id === editingId);
+              return (
+                <div key={editItem.id} style={{ padding: '14px 0', borderBottom: '1px solid var(--line-2)' }}>
+                  {/* Name + unit price */}
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder="Item name"
+                      />
+                    </div>
+                    <div className="field" style={{ width: '110px', marginBottom: 0 }}>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontWeight: 600, pointerEvents: 'none' }}>{curSym}</span>
+                        <input
+                          value={editPrice}
+                          onChange={(e) => setEditPrice(e.target.value)}
+                          placeholder="0.00"
+                          type="number"
+                          step="0.01"
+                          style={{ paddingLeft: '28px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  {/* Quantity row */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                    <span className="cap" style={{ minWidth: '30px' }}>Qty</span>
+                    <button
+                      style={{ width: 32, height: 32, borderRadius: '50%', border: '1.5px solid var(--clay-edge)', background: '#fff', color: 'var(--clay-deep)', fontWeight: 700, fontSize: '1.1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                      onClick={() => setEditQty(Math.max(1, editQty - 1))}>−</button>
+                    <span style={{ fontWeight: 700, minWidth: '20px', textAlign: 'center', fontSize: '1.05rem' }}>{editQty}</span>
+                    <button
+                      style={{ width: 32, height: 32, borderRadius: '50%', border: '1.5px solid var(--clay-edge)', background: '#fff', color: 'var(--clay-deep)', fontWeight: 700, fontSize: '1.1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                      onClick={() => setEditQty(editQty + 1)}>+</button>
+                    {editQty > 1 && (
+                      <span className="cap">= {formatPrice((parseFloat(editPrice) || 0) * editQty)} total</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Button variant="clay" full={false} style={{ flex: 1, padding: '11px 16px', fontSize: '.95rem' }} onClick={saveEdit}>Save</Button>
+                    <Button variant="ghost" full={false} style={{ padding: '11px 16px', fontSize: '.95rem' }} onClick={() => setEditingId(null)}>Cancel</Button>
+                    <Button variant="soft" full={false} style={{ padding: '11px 16px', fontSize: '.95rem', color: 'var(--clay-deep)' }} onClick={() => deleteItem(editItem.id)}>Delete</Button>
                   </div>
                 </div>
-                {/* Quantity row */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                  <span className="text-sm text-muted" style={{ minWidth: '48px' }}>Qty:</span>
-                  <button className="btn btn-secondary btn-sm" style={{ width: '32px', padding: '4px' }}
-                    onClick={() => setEditQty(Math.max(1, editQty - 1))}>−</button>
-                  <span style={{ fontWeight: 700, minWidth: '20px', textAlign: 'center' }}>{editQty}</span>
-                  <button className="btn btn-secondary btn-sm" style={{ width: '32px', padding: '4px' }}
-                    onClick={() => setEditQty(editQty + 1)}>+</button>
-                  {editQty > 1 && (
-                    <span className="text-sm text-muted">= {formatPrice((parseFloat(editPrice) || 0) * editQty)} total</span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="btn btn-primary btn-sm" onClick={saveEdit} style={{ flex: 1 }}>Save</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
-                  <button className="btn btn-sm" onClick={() => deleteItem(editItem.id)}
-                    style={{ color: 'var(--color-accent)', background: 'var(--color-accent-light)' }}>Delete</button>
-                </div>
-              </div>
-            );
-          }
+              );
+            }
 
-          return (
-            <div key={group.items[0].id} className="item-row" onClick={() => startEdit(group.items[0])} style={{ cursor: 'pointer' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <span className="item-name">
+            return (
+              <div
+                key={group.items[0].id}
+                className="srow"
+                onClick={() => startEdit(group.items[0])}
+                style={{ cursor: 'pointer', userSelect: 'none' }}
+              >
+                <span className="nm">
                   {group.name}
                   {group.count > 1 && (
-                    <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', marginLeft: '4px' }}>×{group.count}</span>
+                    <span className="scan-q">×{group.count}</span>
+                  )}
+                  {group.count > 1 && (
+                    <span className="cap" style={{ display: 'block', marginTop: 1, fontWeight: 400 }}>
+                      {formatPrice(group.isQuantityItem ? group.unitPrice : group.price)} each
+                    </span>
                   )}
                 </span>
-                {group.count > 1 && (
-                  <span className="text-sm text-muted" style={{ display: 'block', marginTop: '2px' }}>
-                    {formatPrice(group.isQuantityItem ? group.unitPrice : group.price)} each
+                <span className="pr mono">{formatPrice(group.isQuantityItem ? group.price : group.price * group.count)}</span>
+              </div>
+            );
+          })}
+
+          {/* Add new item inline */}
+          {addingNew && (
+            <div style={{ padding: '14px 0', borderTop: groupedItems.length > 0 ? '1px solid var(--line-2)' : 'none' }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                  <input
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Item name"
+                    autoFocus
+                  />
+                </div>
+                <div className="field" style={{ width: '110px', marginBottom: 0 }}>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontWeight: 600, pointerEvents: 'none' }}>{curSym}</span>
+                    <input
+                      value={newPrice}
+                      onChange={(e) => setNewPrice(e.target.value)}
+                      placeholder="0.00"
+                      type="number"
+                      step="0.01"
+                      style={{ paddingLeft: '28px' }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Button variant="clay" full={false} style={{ flex: 1, padding: '11px 16px', fontSize: '.95rem' }} onClick={addItem}>Add</Button>
+                <Button variant="ghost" full={false} style={{ padding: '11px 16px', fontSize: '.95rem' }} onClick={() => setAddingNew(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Tear-line + subtotal */}
+          <div
+            className="srow sub"
+            style={{ borderTop: '1px dashed var(--line)', marginTop: 4, paddingTop: 12 }}
+          >
+            <span>Subtotal</span>
+            <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(state.subtotal)}</span>
+          </div>
+        </div>
+
+        {/* Hint + add item */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '10px 2px 0' }}>
+          <p className="cap">Tap any item to edit</p>
+          {!addingNew && (
+            <button
+              onClick={() => setAddingNew(true)}
+              style={{
+                background: 'none',
+                border: '1.5px dashed var(--clay-edge)',
+                borderRadius: 'var(--r-pill)',
+                color: 'var(--clay)',
+                fontWeight: 700,
+                fontSize: '.88rem',
+                padding: '6px 14px',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <Icon name="plus" size={14} stroke={2.5} /> Add Item
+            </button>
+          )}
+        </div>
+
+        {/* ── Charges & Fees section ─────────────────────────────────── */}
+        <p className="cap" style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginTop: 22, marginBottom: 10 }}>
+          Charges &amp; Fees
+        </p>
+
+        {/* taxNote banner */}
+        {state.taxNote && (
+          <div style={{
+            padding: '10px 14px',
+            borderRadius: 'var(--r-md)',
+            background: 'var(--sage-soft)',
+            border: '1px solid var(--sage)',
+            marginBottom: 12,
+          }}>
+            <p style={{ fontSize: '.83rem', color: 'var(--sage)', fontWeight: 600 }}>ℹ️ {state.taxNote}</p>
+          </div>
+        )}
+
+        {/* Fee rows */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {fees.map((fee) => (
+            <div key={fee.id}>
+              {fee.detected && (
+                <div style={{ fontSize: '.7rem', fontWeight: 700, color: 'var(--sky)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 4 }}>
+                  Detected from receipt
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {/* Label input */}
+                <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                  <input
+                    value={fee.label}
+                    onChange={(e) => updateFee(fee.id, { label: e.target.value })}
+                    placeholder="Fee name"
+                    style={fee.detected ? { borderColor: 'var(--sky)', background: 'var(--bg-2)' } : undefined}
+                  />
+                </div>
+                {/* Amount input with currency prefix */}
+                <div className="field" style={{ width: 120, marginBottom: 0 }}>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontWeight: 600, pointerEvents: 'none' }}>{curSym}</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={fee.amount}
+                      onChange={(e) => updateFee(fee.id, { amount: e.target.value })}
+                      placeholder="0.00"
+                      style={{ paddingLeft: '28px', ...(fee.detected ? { borderColor: 'var(--sky)', background: 'var(--bg-2)' } : {}) }}
+                    />
+                  </div>
+                </div>
+                {/* Lock for tax, ✕ for others */}
+                {fee.type === 'tax' ? (
+                  <span
+                    aria-label="Tax is always included"
+                    title="Tax is always included"
+                    style={{ width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-3)', fontSize: '1rem', flexShrink: 0 }}
+                  >
+                    🔒
                   </span>
+                ) : (
+                  <button
+                    onClick={() => removeFee(fee.id)}
+                    aria-label="Remove"
+                    style={{ width: 36, height: 36, borderRadius: '50%', border: 'none', background: 'var(--clay-soft)', color: 'var(--clay-deep)', cursor: 'pointer', fontSize: '1.1rem', fontWeight: 700, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    ×
+                  </button>
                 )}
               </div>
-              <span className="item-price">{formatPrice(group.isQuantityItem ? group.price : group.price * group.count)}</span>
             </div>
-          );
-        })}
-
-        {addingNew && (
-          <div style={{ padding: '12px 0' }}>
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-              <input
-                className="input"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="Item name"
-                autoFocus
-                style={{ flex: 1 }}
-              />
-              <input
-                className="input"
-                value={newPrice}
-                onChange={(e) => setNewPrice(e.target.value)}
-                placeholder="0.00"
-                type="number"
-                step="0.01"
-                style={{ width: '100px' }}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="btn btn-primary btn-sm" onClick={addItem} style={{ flex: 1 }}>Add</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setAddingNew(false)}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {!addingNew && (
-        <button className="btn btn-secondary btn-sm mt-12" onClick={() => setAddingNew(true)}>
-          + Add Item
-        </button>
-      )}
-
-      {/* Subtotal right under the items */}
-      <div className="total-row mt-12" style={{ fontWeight: 700, paddingTop: '12px', borderTop: '1px dashed var(--color-border)' }}>
-        <span>Subtotal</span>
-        <span>{formatPrice(state.subtotal)}</span>
-      </div>
-
-      <p className="text-sm text-muted mt-8 text-center">Tap any item to edit</p>
-
-      <div className="divider" />
-
-      {/* ===== Charges & Fees section ===== */}
-      <h3 style={{ fontSize: '0.875rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: '12px' }}>
-        Charges & Fees
-      </h3>
-
-      {state.taxNote ? (
-        <div style={{ padding: '10px 14px', borderRadius: '8px', background: '#e8f5e9', border: '1px solid #a5d6a7', marginBottom: '12px' }}>
-          <p style={{ fontSize: '0.813rem', color: '#2e7d32', fontWeight: 600 }}>ℹ️ {state.taxNote}</p>
+          ))}
         </div>
-      ) : fees.length === 0 && (
-        <p className="text-sm text-muted" style={{ marginBottom: '12px' }}>
-          No extra charges detected. Tap "+ Add expense" below to add one.
-        </p>
-      )}
 
-      <div className="flex-col gap-12">
-        {fees.map((fee) => (
-          <div key={fee.id}>
-            {fee.detected && (
-              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#1565c0', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>
-                🔍 Detected from receipt
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input
-                className="input"
-                value={fee.label}
-                onChange={(e) => updateFee(fee.id, { label: e.target.value })}
-                placeholder="Fee name"
-                style={{ flex: 1, borderColor: fee.detected ? '#90caf9' : undefined, background: fee.detected ? '#e3f2fd' : undefined }}
-              />
-              <div style={{ position: 'relative', width: '120px' }}>
-                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', fontWeight: 600 }}>{curSym}</span>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  value={fee.amount}
-                  onChange={(e) => updateFee(fee.id, { amount: e.target.value })}
-                  placeholder="0.00"
-                  style={{ paddingLeft: '28px', borderColor: fee.detected ? '#90caf9' : undefined, background: fee.detected ? '#e3f2fd' : undefined }}
-                />
-              </div>
-              {fee.type === 'tax' ? (
-                <span
-                  aria-label="Tax is always included"
-                  title="Tax is always included"
-                  style={{ width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)', fontSize: '0.95rem', flexShrink: 0 }}
-                >
-                  🔒
+        {/* + Add expense */}
+        <div style={{ position: 'relative', marginTop: 12 }}>
+          <button
+            onClick={() => setShowAddMenu(!showAddMenu)}
+            style={{
+              background: 'none',
+              border: '1.5px dashed var(--clay-edge)',
+              borderRadius: 'var(--r-pill)',
+              color: 'var(--clay)',
+              fontWeight: 700,
+              fontSize: '.88rem',
+              padding: '8px 16px',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <Icon name="plus" size={14} stroke={2.5} /> Add expense
+          </button>
+          {showAddMenu && (
+            <div style={{
+              marginTop: 8,
+              background: 'var(--panel)',
+              border: '1.5px solid var(--line)',
+              borderRadius: 'var(--r-lg)',
+              padding: '6px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              boxShadow: 'var(--sh-soft)',
+            }}>
+              <button
+                className="btn btn-ghost"
+                style={{ justifyContent: 'flex-start', padding: '10px 14px', fontSize: '.93rem', borderRadius: 'var(--r-md)' }}
+                onClick={() => addFee('admin', 'Service Charge')}
+              >
+                Service / Admin Fee
+              </button>
+              <button
+                className="btn btn-ghost"
+                style={{ justifyContent: 'flex-start', padding: '10px 14px', fontSize: '.93rem', borderRadius: 'var(--r-md)' }}
+                onClick={() => addFee('discount', 'Discount')}
+              >
+                Discount / Comp / Promo
+              </button>
+              <button
+                className="btn btn-ghost"
+                style={{ justifyContent: 'flex-start', padding: '10px 14px', fontSize: '.93rem', borderRadius: 'var(--r-md)' }}
+                onClick={() => addFee('admin', '')}
+              >
+                Other / Custom
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ── Preview totals card ────────────────────────────────────── */}
+        <div className="sum-card" style={{ boxShadow: 'var(--sh-soft)', border: '1.5px solid var(--line)', marginTop: 20 }}>
+          <div className="srow sub" style={{ paddingTop: 10 }}>
+            <span>Subtotal</span>
+            <span className="mono" style={{ fontWeight: 700 }}>{formatPrice(previewSubtotal)}</span>
+          </div>
+          {fees.filter(f => (parseFloat(f.amount) || 0) > 0).map((fee) => {
+            const amt = parseFloat(fee.amount) || 0;
+            const isDiscount = fee.type === 'discount';
+            return (
+              <div key={fee.id} className="srow sub">
+                <span>{fee.label || (isDiscount ? 'Discount' : 'Fee')}</span>
+                <span className="mono" style={isDiscount ? { fontWeight: 700, color: 'var(--sage)' } : { fontWeight: 700 }}>
+                  {isDiscount ? '−' : ''}{formatPrice(amt)}
                 </span>
-              ) : (
-                <button
-                  onClick={() => removeFee(fee.id)}
-                  aria-label="Remove"
-                  style={{ width: '36px', height: '36px', borderRadius: '50%', border: 'none', background: 'var(--color-accent-light)', color: 'var(--color-accent)', cursor: 'pointer', fontSize: '1.1rem', fontWeight: 700, flexShrink: 0 }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
+              </div>
+            );
+          })}
+          <div className="srow tot">
+            <span className="nm">Receipt Total</span>
+            <span className="pr mono">{formatPrice(previewTotal)}</span>
           </div>
-        ))}
-      </div>
+        </div>
 
-      <div className="mt-12" style={{ position: 'relative' }}>
-        <button className="btn btn-secondary btn-sm" onClick={() => setShowAddMenu(!showAddMenu)}>
-          + Add expense
-        </button>
-        {showAddMenu && (
+        {/* ── Reconciliation ─────────────────────────────────────────── */}
+        {reconcileOff ? (
           <div style={{
-            marginTop: '8px',
-            background: 'var(--color-surface)',
-            border: '1.5px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '8px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '4px',
+            marginTop: 10,
+            padding: '12px 14px',
+            borderRadius: 'var(--r-md)',
+            background: '#fff8e1',
+            border: '1.5px solid var(--gold)',
           }}>
-            <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('admin', 'Service Charge')}>Service / Admin Fee</button>
-            <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('discount', 'Discount')}>Discount / Comp / Promo</button>
-            <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => addFee('admin', '')}>Other / Custom</button>
+            <p style={{ fontWeight: 700, color: '#bf360c', fontSize: '.9rem' }}>
+              ⚠ This doesn&apos;t match the receipt total
+            </p>
+            <p className="cap" style={{ marginTop: 6, lineHeight: 1.5 }}>
+              The receipt shows <strong>{formatPrice(scannedTotal)}</strong>, but your items + charges add to{' '}
+              <strong>{formatPrice(previewTotal)}</strong> ({reconcileDiff > 0 ? 'over' : 'under'} by {formatPrice(Math.abs(reconcileDiff))}).
+              Check for a missed item, tax, or discount before continuing.
+            </p>
           </div>
+        ) : scannedTotal > 0 ? (
+          <p className="cap" style={{ textAlign: 'center', marginTop: 10, color: 'var(--sage)', fontWeight: 600 }}>
+            ✓ Matches the receipt total of {formatPrice(scannedTotal)}
+          </p>
+        ) : (
+          <p className="cap" style={{ textAlign: 'center', marginTop: 10 }}>
+            Verify these match your receipt before continuing
+          </p>
         )}
+
+        <div style={{ flex: 1, minHeight: 16 }} />
+
+        {/* ── Sticky CTA ────────────────────────────────────────────── */}
+        <Button
+          icon="arrow-right"
+          onClick={handleContinue}
+          disabled={state.items.length === 0}
+          style={{ marginTop: 20 }}
+        >
+          Looks right — set the tip
+        </Button>
+
       </div>
-
-      {/* Preview total */}
-      <div className="card card-surface mt-16">
-        <div className="total-row">
-          <span>Subtotal</span>
-          <span className="fw-700">{formatPrice(previewSubtotal)}</span>
-        </div>
-        {fees.filter(f => (parseFloat(f.amount) || 0) > 0).map((fee) => {
-          const amt = parseFloat(fee.amount) || 0;
-          const isDiscount = fee.type === 'discount';
-          return (
-            <div key={fee.id} className="total-row">
-              <span className="text-muted">{fee.label || (isDiscount ? 'Discount' : 'Fee')}</span>
-              <span style={isDiscount ? { color: 'var(--color-success, #2e7d32)' } : undefined}>
-                {isDiscount ? '−' : ''}{formatPrice(amt)}
-              </span>
-            </div>
-          );
-        })}
-        <div className="total-row total-row-final">
-          <span>Receipt Total</span>
-          <span>{formatPrice(previewTotal)}</span>
-        </div>
-      </div>
-
-      {/* Reconciliation against the printed grand total from the scan */}
-      {reconcileOff ? (
-        <div className="card mt-8" style={{ borderColor: 'var(--color-warning, #E5A20A)', background: '#fff8e1' }}>
-          <p className="text-sm" style={{ fontWeight: 700, color: '#bf360c' }}>
-            ⚠ This doesn't match the receipt total
-          </p>
-          <p className="text-sm text-muted mt-8">
-            The receipt shows <strong>{formatPrice(scannedTotal)}</strong>, but your items + charges add to{' '}
-            <strong>{formatPrice(previewTotal)}</strong> ({reconcileDiff > 0 ? 'over' : 'under'} by {formatPrice(Math.abs(reconcileDiff))}).
-            Check for a missed item, tax, or discount before continuing.
-          </p>
-        </div>
-      ) : scannedTotal > 0 ? (
-        <p className="text-sm text-center mt-8" style={{ color: 'var(--color-success, #2e7d32)', fontWeight: 600 }}>
-          ✓ Matches the receipt total of {formatPrice(scannedTotal)}
-        </p>
-      ) : (
-        <p className="text-sm text-muted text-center mt-8">
-          Verify these match your receipt before continuing
-        </p>
-      )}
-
-      <div className="spacer" />
-
-      <button
-        className="btn btn-primary mt-24"
-        onClick={handleContinue}
-        disabled={state.items.length === 0}
-      >
-        Looks Good — Continue
-      </button>
     </div>
   );
 }
