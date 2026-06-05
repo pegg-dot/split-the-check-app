@@ -440,6 +440,7 @@ export default function ClaimItems() {
     if (unclaimedItems.length > 0) {
       setConfirm(true);
     } else {
+      if (socket) socket.emit('done-claiming', { sessionId });
       navigate(`/summary/${sessionId}`);
     }
   }
@@ -599,7 +600,7 @@ export default function ClaimItems() {
                   <Button
                     variant="clay"
                     icon="arrow-right"
-                    onClick={() => { setConfirm(false); navigate(`/summary/${sessionId}`); }}
+                    onClick={() => { setConfirm(false); if (socket) socket.emit('done-claiming', { sessionId }); navigate(`/summary/${sessionId}`); }}
                   >
                     Leave on {host}'s tab
                   </Button>

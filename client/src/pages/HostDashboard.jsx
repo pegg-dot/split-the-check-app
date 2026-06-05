@@ -97,10 +97,7 @@ export function PersonRow({
         <div className="pitems">
           {displayItems.map((it, k) => (
             <div className="pi" key={k}>
-              <span>
-                {it.name}
-                {(it.splitCount > 1) && <span style={{ opacity: 0.7 }}> (1/{it.splitCount})</span>}
-              </span>
+              <span>{it.name}</span>
               <span className="mono">{fmt(it.myShare ?? it.share ?? 0, currency)}</span>
             </div>
           ))}
@@ -269,12 +266,7 @@ export default function HostDashboard() {
         adminFeeShare: t.adminFeeShare || 0,
         paid,
         status,
-        claimedItems: (t.claimedItems || []).map(item => ({
-          name: item.name,
-          price: item.price,
-          myShare: item.myShare,
-          splitCount: item.claims?.find(c => c.guestName === name)?.splitCount || 1,
-        })),
+        claimedItems: t.claimedItems || [],
       };
     });
   }, [state]);
