@@ -13,6 +13,8 @@ const initialState = {
   // Host info
   hostName: '',
   venmoHandle: '',
+  paypalHandle: '', // optional PayPal.me username
+  cashtag: '',      // optional Cash App $cashtag
   hostDisplayName: null, // verified Venmo display name
 
   // Receipt items from AI
@@ -49,7 +51,7 @@ const initialState = {
 function sessionReducer(state, action) {
   switch (action.type) {
     case 'SET_HOST': {
-      return { ...state, hostName: action.name, venmoHandle: action.venmoHandle, hostDisplayName: action.hostDisplayName ?? state.hostDisplayName, currentUser: { name: action.name, isHost: true } };
+      return { ...state, hostName: action.name, venmoHandle: action.venmoHandle, paypalHandle: action.paypalHandle ?? state.paypalHandle, cashtag: action.cashtag ?? state.cashtag, hostDisplayName: action.hostDisplayName ?? state.hostDisplayName, currentUser: { name: action.name, isHost: true } };
     }
     case 'RESET': {
       // Start a brand-new split (clears the persisted in-progress one).
@@ -139,6 +141,8 @@ function sessionReducer(state, action) {
         ...state,
         hostName: s.hostName,
         venmoHandle: s.venmoHandle,
+        paypalHandle: s.paypalHandle || '',
+        cashtag: s.cashtag || '',
         hostDisplayName: s.hostDisplayName || null,
         items: normalizeItems(s.items),
         subtotal: s.subtotal,

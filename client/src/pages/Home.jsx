@@ -10,6 +10,9 @@ export default function Home() {
   const { state, dispatch } = useSession();
   const [name, setName] = useState('');
   const [venmo, setVenmo] = useState('');
+  const [paypal, setPaypal] = useState('');
+  const [cashtag, setCashtag] = useState('');
+  const [showMore, setShowMore] = useState(false);
   const [currency, setCurrency] = useState('USD');
   const [verifying, setVerifying] = useState(false);
   const [venmoStatus, setVenmoStatus] = useState(null); // { valid, displayName, note, error }
@@ -83,7 +86,7 @@ export default function Home() {
     e.preventDefault();
     if (!canStart) return;
     dispatch({ type: 'RESET' }); // clear any stale in-progress split before starting fresh
-    dispatch({ type: 'SET_HOST', name: name.trim(), venmoHandle: venmo.trim(), hostDisplayName: venmoStatus?.displayName || null });
+    dispatch({ type: 'SET_HOST', name: name.trim(), venmoHandle: venmo.trim(), hostDisplayName: venmoStatus?.displayName || null, paypalHandle: paypal.trim(), cashtag: cashtag.trim() });
     dispatch({ type: 'SET_CURRENCY', currency, exchangeRate: 1 }); // rate fetched after scan
     navigate('/scan');
   }
@@ -203,6 +206,46 @@ export default function Home() {
               <div className="hint">This is where your friends will send payment</div>
             )}
           </div>
+
+          {/* Optional extra payment rails — tucked behind a toggle */}
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0 10px',
+              display: 'flex', alignItems: 'center', gap: 6,
+              color: 'var(--clay-deep)', fontSize: '0.84rem', fontWeight: 700,
+            }}
+          >
+            <Icon name="plus" size={14} stroke={2.4} />
+            More ways to get paid (optional)
+            <Icon name={showMore ? 'chevron-up' : 'chevron-down'} size={14} stroke={2.2} />
+          </button>
+
+          {showMore && (
+            <>
+              <div className="field">
+                <label>PayPal.me username</label>
+                <input
+                  type="text"
+                  placeholder="e.g. sarahjones (paypal.me/sarahjones)"
+                  value={paypal}
+                  onChange={(e) => setPaypal(e.target.value)}
+                />
+                <div className="hint">Friends get a “Pay with PayPal” button too.</div>
+              </div>
+              <div className="field">
+                <label>Cash App $cashtag</label>
+                <input
+                  type="text"
+                  placeholder="e.g. $sarahjones"
+                  value={cashtag}
+                  onChange={(e) => setCashtag(e.target.value)}
+                />
+                <div className="hint">Adds a “Pay with Cash App” button.</div>
+              </div>
+            </>
+          )}
 
           {/* Currency field */}
           <div className="field">

@@ -9,7 +9,7 @@ import {
   toUSD,
 } from '../context/SessionContext';
 import { socket, BACKEND_URL } from '../context/socket';
-import { openVenmo } from '../lib/venmo';
+import { openVenmo, openPaypal, openCashApp } from '../lib/venmo';
 import { Avatar, toneFor, Icon, Button, Squiggle, SketchCheck } from '../components/ui/index.js';
 
 // ── Pure named exports — no socket/context inside (safe to unit-test) ─────
@@ -108,6 +108,14 @@ export default function Summary() {
   const isPaid    = myStatus === 'paid' || myStatus === 'confirmed';
 
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
+  const [payMethod, setPayMethod] = useState('venmo'); // which rail they tapped (for "Re-open X")
+
+  // Which payment rails the host offered (Venmo always; PayPal / Cash App optional).
+  const METHOD_LABEL = { venmo: 'Venmo', paypal: 'PayPal', cashapp: 'Cash App' };
+  const payMethods = [];
+  if (state.venmoHandle) payMethods.push('venmo');
+  if (state.paypalHandle) payMethods.push('paypal');
+  if (state.cashtag) payMethods.push('cashapp');
 
   // ── Change-detection (totals-based, not per-claim) ──────────────────
   // Snapshot total at the moment the guest confirms payment. On each items-updated
@@ -202,15 +210,30 @@ export default function Summary() {
     setChangeAlert(null);
   }
 
-  // ── Venmo two-step ──────────────────────────────────────────────────
-  function handleVenmoTap() {
+  // ── Pay → confirm (works for any rail) ───────────────────────────────
+  function handlePay(method) {
     if (!myName || isHost) return;
     if (changeAlert) return; // block until acknowledged
-    const noteText = isForeign
-      ? `Split the Check — my share (${fmtPrice(total, currency)} → USD)`
-      : `Split the Check — my share`;
-    openVenmo({ handle: state.venmoHandle, amount: venmoAmount, note: noteText });
+    setPayMethod(method);
+    if (method === 'paypal') {
+      // PayPal.me takes a native currency suffix, so send the local amount.
+      openPaypal({ handle: state.paypalHandle, amount: total, currency });
+    } else if (method === 'cashapp') {
+      // Cash App is USD-centric — send the USD-converted amount.
+      openCashApp({ handle: state.cashtag, amount: venmoAmount });
+    } else {
+      const noteText = isForeign
+        ? `Split the Check — my share (${fmtPrice(total, currency)} → USD)`
+        : `Split the Check — my share`;
+      openVenmo({ handle: state.venmoHandle, amount: venmoAmount, note: noteText });
+    }
     setAwaitingConfirm(true);
+  }
+  // Catch-all for cash, Apple Cash, Zelle, etc. — no app to open, just assert.
+  function paidAnotherWay() {
+    if (!myName || isHost) return;
+    if (changeAlert) return;
+    confirmPaid();
   }
 
   function confirmPaid() {
@@ -367,7 +390,7 @@ export default function Summary() {
             You&apos;re the host — you&apos;ll collect payments from everyone else.
           </p>
         ) : awaitingConfirm ? (
-          /* Returned from Venmo — confirm the payment went through */
+          /* Returned from the payment app — confirm it went through */
           <div style={{
             background: 'var(--panel)',
             borderRadius: 'var(--r-card)',
@@ -377,7 +400,7 @@ export default function Summary() {
           }}>
             <p style={{ fontWeight: 700, marginBottom: 4 }}>Did you send the payment?</p>
             <p className="cap" style={{ marginBottom: 14 }}>
-              Only confirm if Venmo actually went through — the host sees this.
+              Only confirm if {METHOD_LABEL[payMethod] || 'the payment'} actually went through — the host sees this.
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button variant="clay" style={{ flex: 1 }} onClick={confirmPaid}>
@@ -390,26 +413,45 @@ export default function Summary() {
             <Button
               variant="soft"
               style={{ width: '100%', marginTop: 10 }}
-              onClick={handleVenmoTap}
+              onClick={() => handlePay(payMethod)}
             >
-              Re-open Venmo
+              Re-open {METHOD_LABEL[payMethod] || 'app'}
             </Button>
           </div>
         ) : (
-          /* Primary pay CTA */
+          /* Pay CTAs — one per rail the host offered, plus a manual fallback */
           <>
-            <Button
-              variant="clay"
-              icon="arrow-right"
-              style={{ marginTop: 20 }}
-              disabled={!!changeAlert}
-              onClick={handleVenmoTap}
-            >
-              Pay {hostLabel} {fmtPrice(total, currency)}
-            </Button>
+            {payMethods.map((m, i) => (
+              <Button
+                key={m}
+                variant={i === 0 ? 'clay' : 'soft'}
+                icon={i === 0 ? 'arrow-right' : undefined}
+                style={{ marginTop: i === 0 ? 20 : 10 }}
+                disabled={!!changeAlert}
+                onClick={() => handlePay(m)}
+              >
+                {m === 'venmo'
+                  ? `Pay ${hostLabel} ${fmtPrice(total, currency)}`
+                  : `Pay with ${METHOD_LABEL[m]}`}
+              </Button>
+            ))}
             <p className="pay-note">
-              Sent instantly <b>via Venmo</b> · you both get a receipt
+              {payMethods.length > 1
+                ? <>Pick a method · the host sees who&rsquo;s paid</>
+                : <>Sent instantly <b>via Venmo</b> · you both get a receipt</>}
             </p>
+            <button
+              type="button"
+              onClick={paidAnotherWay}
+              disabled={!!changeAlert}
+              style={{
+                marginTop: 4, alignSelf: 'center', background: 'none', border: 'none',
+                color: 'var(--ink-3)', fontSize: '0.85rem', fontWeight: 600,
+                cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3, padding: 8,
+              }}
+            >
+              I paid {hostLabel} another way
+            </button>
           </>
         )}
 

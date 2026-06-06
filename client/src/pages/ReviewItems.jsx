@@ -180,6 +180,8 @@ export default function ReviewItems() {
       hostName: state.hostName,
       venmoHandle: state.venmoHandle,
       hostDisplayName: state.hostDisplayName,
+      paypalHandle: state.paypalHandle,
+      cashtag: state.cashtag,
       items: state.items,
       subtotal: state.subtotal,
       tax: taxTotal,

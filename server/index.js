@@ -50,6 +50,8 @@ function createSession(sessionId, hostName, venmoHandle, hostDisplayName) {
     hostName,
     hostDisplayName: hostDisplayName || null, // verified Venmo display name
     venmoHandle,
+    paypalHandle: null, // optional PayPal.me username
+    cashtag: null,      // optional Cash App $cashtag
     items: [],
     subtotal: 0,
     tax: 0,
@@ -358,7 +360,7 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
   // Host creates a session
-  socket.on('create-session', ({ sessionId, hostName, venmoHandle, hostDisplayName, items, subtotal, tax, tipPercent, tipMode, tipDollar, tipIncluded, tipAmount, adminFee, discount, currency, exchangeRate, receiptTotal }) => {
+  socket.on('create-session', ({ sessionId, hostName, venmoHandle, hostDisplayName, paypalHandle, cashtag, items, subtotal, tax, tipPercent, tipMode, tipDollar, tipIncluded, tipAmount, adminFee, discount, currency, exchangeRate, receiptTotal }) => {
     let session = getSession(sessionId);
     if (!session) {
       session = createSession(sessionId, hostName, venmoHandle, hostDisplayName);
@@ -366,6 +368,8 @@ io.on('connection', (socket) => {
     session.hostName = hostName ?? session.hostName;
     session.venmoHandle = venmoHandle ?? session.venmoHandle;
     if (hostDisplayName) session.hostDisplayName = hostDisplayName;
+    if (paypalHandle !== undefined) session.paypalHandle = paypalHandle || null;
+    if (cashtag !== undefined) session.cashtag = cashtag || null;
     session.items = normalizeItems(items);
     session.subtotal = subtotal;
     session.tax = tax;
