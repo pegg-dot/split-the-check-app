@@ -1,11 +1,10 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SessionProvider } from './context/SessionContext';
 import QROverlay from './components/QROverlay';
 import Welcome from './pages/Welcome';
 import Home from './pages/Home';
 import ScanReceipt from './pages/ScanReceipt';
 import ReviewItems from './pages/ReviewItems';
-import TipAndShare from './pages/TipAndShare';
 import JoinSession from './pages/JoinSession';
 import JoinCode from './pages/JoinCode';
 import ClaimItems from './pages/ClaimItems';
@@ -25,7 +24,8 @@ export default function App() {
           <Route path="/setup" element={<Home />} />
           <Route path="/scan" element={<ScanReceipt />} />
           <Route path="/review" element={<ReviewItems />} />
-          <Route path="/tip" element={<TipAndShare />} />
+          {/* /review now owns the full bill + tip + QR launch; /tip is legacy */}
+          <Route path="/tip" element={<Navigate to="/review" replace />} />
           <Route path="/host/:sessionId" element={<HostDashboard />} />
 
           {/* Guest flow */}

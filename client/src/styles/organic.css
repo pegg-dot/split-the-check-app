@@ -263,6 +263,12 @@ button { font-family: inherit; cursor: pointer; }
 .mode-toggle button { flex: 1; padding: 11px; border: none; background: transparent; font-weight: 700; font-size: .9rem; color: var(--ink-2); cursor: pointer; }
 .mode-toggle button.on { background: var(--clay); color: #fff; }
 
+/* small dashed "add" chips under the receipt */
+.addchip { display: inline-flex; align-items: center; gap: 5px; background: none;
+  border: 1.5px dashed var(--clay-edge); border-radius: var(--r-pill); color: var(--clay);
+  font-weight: 700; font-size: .82rem; padding: 6px 13px; cursor: pointer; transition: all .15s; }
+.addchip:hover { background: var(--clay-soft); border-color: var(--clay); }
+
 /* qr sheet */
 .sheet-root { position: absolute; inset: 0; z-index: 40; pointer-events: none; }
 .sheet-root > * { pointer-events: auto; }

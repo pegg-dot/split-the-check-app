@@ -48,7 +48,8 @@
       "PowerShell(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
       "PowerShell(Stop-Process -Force)",
       "Bash(ipconfig /all)",
-      "Bash(findstr /i \"IPv4\\\\|Subnet\\\\|Gateway\\\\|WiFi\\\\|Wireless\\\\|adapter\")"
+      "Bash(findstr /i \"IPv4\\\\|Subnet\\\\|Gateway\\\\|WiFi\\\\|Wireless\\\\|adapter\")",
+      "Read(//Users/natepegg/Downloads/**)"
     ]
   }
 }
