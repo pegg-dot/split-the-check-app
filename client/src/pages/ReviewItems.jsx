@@ -15,11 +15,18 @@ export default function ReviewItems() {
   const [newName, setNewName] = useState('');
   const [newPrice, setNewPrice] = useState('');
   // Fees: tax, service charges, and auto-detected gratuity all appear here as editable rows.
+  // The AI sets taxNote (and tax = 0) only when tax is baked into the item
+  // prices (European VAT-style receipts). In that case the green banner below
+  // already explains it, so a separate "Tax 0.00" row would just be confusing.
+  const taxInPrices = !!state.taxNote;
   const [fees, setFees] = useState(() => {
     const list = [];
     let nextId = 1;
-    // Tax is always part of the bill — always present, editable but not removable.
-    list.push({ id: nextId++, type: 'tax', label: 'Tax', amount: (Number(state.tax) || 0).toFixed(2) });
+    // Tax is part of the bill — show a locked, editable row UNLESS tax is
+    // already included in the item prices (then the banner stands alone).
+    if (!taxInPrices) {
+      list.push({ id: nextId++, type: 'tax', label: 'Tax', amount: (Number(state.tax) || 0).toFixed(2) });
+    }
     if (state.adminFee > 0) list.push({ id: nextId++, type: 'admin', label: 'Service Charge', amount: state.adminFee.toFixed(2) });
     if (state.tipIncluded && state.tipAmount > 0) list.push({ id: nextId++, type: 'gratuity', label: 'Gratuity', amount: state.tipAmount.toFixed(2), detected: true });
     if (state.discount > 0) list.push({ id: nextId++, type: 'discount', label: 'Discount', amount: state.discount.toFixed(2), detected: true });
@@ -100,7 +107,7 @@ export default function ReviewItems() {
     const hasGratuity = gratuityTotal > 0;
 
     console.log('[ReviewItems] handleContinue →', { taxTotal, adminTotal, gratuityTotal, discountTotal, hasGratuity, items: state.items.length });
-    dispatch({ type: 'SET_TAX', tax: taxTotal });
+    dispatch({ type: 'SET_TAX', tax: taxTotal, taxNote: state.taxNote });
     dispatch({ type: 'SET_ADMIN_FEE', adminFee: adminTotal });
     dispatch({ type: 'SET_SCAN_EXTRAS', discount: discountTotal, receiptTotal: state.receiptTotal });
     dispatch({ type: 'SET_TIP_INCLUDED', tipIncluded: hasGratuity, tipAmount: gratuityTotal });
