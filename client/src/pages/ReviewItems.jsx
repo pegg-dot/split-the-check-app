@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSession, formatPrice as fmtPrice, currencySymbol, round2 } from '../context/SessionContext';
 import { socket } from '../context/socket';
 import { recordSplit } from '../lib/history';
+import { generateSessionCode } from '../lib/sessionCode';
 import { Icon, Button } from '../components/ui';
 
 const TIP_PRESETS = [0, 15, 18, 20];
@@ -55,8 +56,7 @@ export default function ReviewItems() {
   // Generate a session id up front so the QR is ready the moment they tap.
   useEffect(() => {
     if (!state.sessionId) {
-      const id = Math.random().toString(36).substring(2, 12);
-      dispatch({ type: 'SET_SESSION_ID', sessionId: id });
+      dispatch({ type: 'SET_SESSION_ID', sessionId: generateSessionCode() });
     }
   }, [state.sessionId, dispatch]);
   const sessionId = state.sessionId;
@@ -198,7 +198,7 @@ export default function ReviewItems() {
     };
   }
   function ensureSession(then) {
-    const sid = sessionId || Math.random().toString(36).substring(2, 12);
+    const sid = sessionId || generateSessionCode();
     if (!sessionId) dispatch({ type: 'SET_SESSION_ID', sessionId: sid });
     // Commit the editable fee values into shared state.
     dispatch({ type: 'SET_TAX', tax: taxTotal, taxNote: state.taxNote });

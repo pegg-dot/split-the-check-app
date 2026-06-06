@@ -139,7 +139,15 @@ export default function QROverlay() {
           />
         </div>
 
-        <p className="qrurl">{sessionUrl}</p>
+        {/* Read-aloud fallback for anyone whose camera won't scan */}
+        <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--bg-2)', borderRadius: 'var(--r-md)', textAlign: 'center' }}>
+          <div className="cap" style={{ marginBottom: 4 }}>Can&rsquo;t scan? Enter this code</div>
+          <div style={{ fontSize: '1.7rem', fontWeight: 800, letterSpacing: '0.22em', color: 'var(--ink)' }}>
+            {state.sessionId}
+          </div>
+        </div>
+
+        <p className="qrurl" style={{ marginTop: 12 }}>{sessionUrl}</p>
 
         <div style={{ marginTop: 18 }}>
           <Button variant="ghost" onClick={() => setOpen(false)}>
