@@ -371,15 +371,23 @@ export default function HostDashboard() {
 
         {/* Unclaimed amount note */}
         {totalUnaccounted >= 0.01 && (
-          <div style={{ padding: '10px 14px', borderRadius: 'var(--r-lg)', background: 'var(--clay-soft)', border: '1px solid var(--clay-edge)', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--clay-deep)' }}>
-              {formatPrice(totalUnaccounted)} unclaimed — on your tab
-            </span>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button className="btn btn-ghost" style={{ fontSize: '0.78rem', padding: '4px 12px' }} onClick={() => resolveLeftover('me')}>
-                Put leftovers on me
+          <div style={{ padding: '15px 16px', borderRadius: 'var(--r-lg)', background: 'var(--clay-soft)', border: '1.5px solid var(--clay-edge)', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
+              <Icon name="receipt" size={18} stroke={2} color="var(--clay-deep)" style={{ marginTop: 2, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 800, color: 'var(--clay-deep)', fontSize: '1rem' }}>
+                  {formatPrice(totalUnaccounted)} unclaimed
+                </div>
+                <p style={{ fontSize: '0.82rem', color: 'var(--clay-deep)', opacity: 0.8, marginTop: 3, lineHeight: 1.45 }}>
+                  Nobody grabbed these yet — they sit on your tab unless you reassign them.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 13 }}>
+              <button className="btn btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '9px 10px' }} onClick={() => resolveLeftover('me')}>
+                Put it on me
               </button>
-              <button className="btn btn-ghost" style={{ fontSize: '0.78rem', padding: '4px 12px' }} onClick={() => resolveLeftover('split')}>
+              <button className="btn btn-outline" style={{ flex: 1, fontSize: '0.85rem', padding: '9px 10px' }} onClick={() => resolveLeftover('split')}>
                 Split evenly
               </button>
             </div>
