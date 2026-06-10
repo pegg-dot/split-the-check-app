@@ -739,8 +739,9 @@ function setPaymentStatus(session, guestName, status) {
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.join(__dirname, '../client/dist');
   app.use(express.static(clientDist));
-  // Send index.html for any route not matched by the API (client-side routing)
-  app.get('*', (req, res) => {
+  // Send index.html for any route not matched by the API (client-side routing).
+  // Express 5 requires a named wildcard ('/{*splat}'), not the bare '*'.
+  app.get('/{*splat}', (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }

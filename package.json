@@ -1,8 +1,11 @@
 {
   "name": "split-the-check",
   "version": "1.0.0",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
-    "build": "npm install --prefix client && npm run build --prefix client",
+    "build": "npm install --prefix client --include=dev && npm run build --prefix client",
     "start": "node server/index.js"
   },
   "dependencies": {
