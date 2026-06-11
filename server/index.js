@@ -284,10 +284,18 @@ FINAL CHECK: sum(items) + tax + adminFee + tipAmount − discount must equal "to
         break;
       }
     }
-    res.status(500).json({ error: 'Failed to scan receipt. Please try again.' });
+    // Surface the upstream status + type (never the raw message/secret) so a
+    // failing deploy can be diagnosed without log access.
+    res.status(500).json({
+      error: 'Failed to scan receipt. Please try again.',
+      detail: lastError ? { status: lastError.status || null, type: lastError.error?.type || lastError.name || null } : null,
+    });
   } catch (err) {
     console.error('Receipt scan error:', err.message);
-    res.status(500).json({ error: 'Failed to scan receipt. Please try again.' });
+    res.status(500).json({
+      error: 'Failed to scan receipt. Please try again.',
+      detail: { status: err.status || null, type: err.error?.type || err.name || null },
+    });
   }
 });
 
