@@ -286,15 +286,21 @@ FINAL CHECK: sum(items) + tax + adminFee + tipAmount − discount must equal "to
     }
     // Surface the upstream status + type (never the raw message/secret) so a
     // failing deploy can be diagnosed without log access.
-    res.status(500).json({
-      error: 'Failed to scan receipt. Please try again.',
-      detail: lastError ? { status: lastError.status || null, type: lastError.error?.error?.type || lastError.error?.type || lastError.name || null, message: (lastError.message || '').slice(0, 300) } : null,
+    // A low-credit balance is the one upstream failure worth telling the user
+    // plainly; everything else stays generic. Status+type only — no raw
+    // provider message/request_id leaked to clients.
+    const lowCredit = lastError?.status === 400 && /credit balance is too low/i.test(lastError?.message || '');
+    res.status(lowCredit ? 503 : 500).json({
+      error: lowCredit
+        ? 'Receipt scanning is temporarily unavailable. You can enter items manually.'
+        : 'Failed to scan receipt. Please try again.',
+      detail: lastError ? { status: lastError.status || null, type: lastError.error?.error?.type || lastError.error?.type || lastError.name || null } : null,
     });
   } catch (err) {
     console.error('Receipt scan error:', err.message);
     res.status(500).json({
       error: 'Failed to scan receipt. Please try again.',
-      detail: { status: err.status || null, type: err.error?.error?.type || err.error?.type || err.name || null, message: (err.message || '').slice(0, 300) },
+      detail: { status: err.status || null, type: err.error?.error?.type || err.error?.type || err.name || null },
     });
   }
 });
