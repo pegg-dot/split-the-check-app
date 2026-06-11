@@ -288,13 +288,13 @@ FINAL CHECK: sum(items) + tax + adminFee + tipAmount − discount must equal "to
     // failing deploy can be diagnosed without log access.
     res.status(500).json({
       error: 'Failed to scan receipt. Please try again.',
-      detail: lastError ? { status: lastError.status || null, type: lastError.error?.type || lastError.name || null } : null,
+      detail: lastError ? { status: lastError.status || null, type: lastError.error?.error?.type || lastError.error?.type || lastError.name || null, message: (lastError.message || '').slice(0, 300) } : null,
     });
   } catch (err) {
     console.error('Receipt scan error:', err.message);
     res.status(500).json({
       error: 'Failed to scan receipt. Please try again.',
-      detail: { status: err.status || null, type: err.error?.type || err.name || null },
+      detail: { status: err.status || null, type: err.error?.error?.type || err.error?.type || err.name || null, message: (err.message || '').slice(0, 300) },
     });
   }
 });
